@@ -47,7 +47,12 @@ The split follows a dependency order: #3 is manual and unblocks #4, which unbloc
 
 ### CI result
 
-_Pending: filled in after the first run on the PR._
+| Run | Result | Time | Cause |
+| --- | --- | --- | --- |
+| 1 | Failed | 5 s | `astral-sh/setup-uv@v10` did not resolve (no floating major tag) |
+| 2 | Passed | 9 s | Pinned setup-uv to the v10.3.3 commit SHA |
+
+Run 2 is the M0 gate: CI green on an empty app. The nine-second wall time is the baseline to watch as dbt, Terraform checks, and evals join the workflow.
 
 ## What I would change
 
@@ -58,7 +63,7 @@ _Pending: filled in after the first run on the PR._
 
 | Issue | Status |
 | --- | --- |
-| #2 Repo scaffold | In PR |
+| #2 Repo scaffold | In PR [#7](https://github.com/justfetz/packaging-ops-agent/pull/7), CI green |
 | #3 GCP bootstrap | Waiting on Jason |
 | #4 Terraform skeleton | Blocked on #3 |
 | #5 WIF for CI | Blocked on #4 |
