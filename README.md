@@ -7,14 +7,16 @@ A live, public agentic analytics app over a synthetic packaging supply chain, bu
 - Build plan: [docs/PLAN.md](docs/PLAN.md)
 - Build log: [docs/build-log/](docs/build-log/)
 - Decision records: [docs/adr/](docs/adr/)
+- Infrastructure: [infra/terraform/](infra/terraform/), dev applied, prod pending a project
 - How Claude Code sessions work in this repo: [CLAUDE.md](CLAUDE.md)
 
 ## Run locally
 
 ```bash
 make install
-make check   # lint + tests, same as CI
+make check   # lint + tests + terraform fmt/validate, same as CI
 make run     # http://127.0.0.1:8080/healthz
+make plan ENV=dev   # terraform plan against the dev project
 ```
 
-Requires [uv](https://docs.astral.sh/uv/). Python 3.12 is pinned in `.python-version` and uv installs it if missing.
+Requires [uv](https://docs.astral.sh/uv/) and [Terraform](https://developer.hashicorp.com/terraform/install) at the version in `infra/terraform/.terraform-version`. Python 3.12 is pinned in `.python-version` and uv installs it if missing.

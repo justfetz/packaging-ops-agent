@@ -90,9 +90,52 @@ Every claim in "What the session found" is the output of a command run in the se
 - Vertex AI model locations: https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations
 - BigQuery dataset locations, including the `US` multi-region: https://cloud.google.com/bigquery/docs/locations
 
+## Issue #4: the Terraform skeleton
+
+The first infrastructure-as-code PR. Everything issue #3 did by hand, except the project itself and the deployer identity, is now declared under `infra/terraform/` and applied to dev. Decision record: [ADR 0001](../adr/0001-terraform-for-every-gcp-resource.md).
+
+### What was built
+
+- **Five small modules** (`project_services`, `landing_bucket`, `bigquery_datasets`, `agent_service_account`, `budget`) and **two roots**, `envs/dev` and `envs/prod`. The roots are identical except for `terraform.tfvars` and `backend.tfvars`.
+- **Fourteen APIs** enabled as `google_project_service`, including the five that #3 enabled by hand and `iamcredentials`, which #5 needs for Workload Identity Federation. APIs are never disabled on destroy, so a dev teardown cannot break a service another resource still needs.
+- **The landing bucket**, versioned with a lifecycle rule that keeps five noncurrent versions, uniform bucket-level access, public access prevention enforced.
+- **Four BigQuery datasets** (`bronze`, `silver`, `gold`, `evals`) in the `US` multi-region. Dev sets `delete_contents_on_destroy`; prod does not.
+- **The agent's runtime identity**, `agent-runtime@…`, with `roles/bigquery.jobUser` on the project and `roles/bigquery.dataViewer` on `gold` and nothing else. No key: Cloud Run will attach it in M2. `bq show` on `bronze` confirms the account does not appear there.
+- **The $25 budget** as `google_billing_budget` on the billing account, filtered to the project number, thresholds at 50, 90, and 100 %, spend measured before credits so a free-trial credit cannot mask real usage.
+- **`make bootstrap`, `make plan`, `make apply`, `make terraform-check`.** `apply` plans to a file and applies that file, so what runs is exactly what was shown. `apply` with `ENV=prod` refuses to run without `CONFIRM=prod`. `terraform-check` joined `make check`, and CI got a second job that installs the version pinned in `.terraform-version` straight from `releases.hashicorp.com` with a SHA256 check, then runs it.
+
+### How it was tested
+
+`make plan ENV=dev` (23 to add), `make apply ENV=dev` (23 added), then a second `make plan ENV=dev`: "No changes. Your infrastructure matches the configuration." After that, `gcloud billing budgets list`, `bq ls`, `bq show` on `gold` and `bronze`, `gcloud storage buckets describe`, and `gcloud projects get-iam-policy` confirmed each resource from outside Terraform. `make check` passes locally with the new Terraform step.
+
+### What broke
+
+- **`terraform init` could not reach the provider registry.** `registry.terraform.io` is not in the environment's allowed hosts; `releases.hashicorp.com` is. The provider binaries are also published on the release host, so the session downloaded Terraform 1.17.1 and `hashicorp/google` 8.9.0 from there, verified both against their `SHA256SUMS`, and pointed Terraform at a filesystem mirror with `TF_CLI_CONFIG_FILE`. The steps are in `infra/terraform/README.md`. A side effect: the committed lock file has only the `h1:` hash for `linux_amd64`, which CI uses; a Mac needs one `terraform providers lock` run, also documented there.
+- **The first attempt at installing Terraform was refused by the sandbox** because it wrote to `~/.bashrc` and `~/.terraformrc`. Everything now lives in the session scratchpad. Worth remembering: install tools there, not in the home directory.
+- **The first `make plan` failed with "Error loading state: <nil>"** after `init` had created `terraform/state/default.tfstate` in the bucket. `gcloud storage ls` showed the object; `gcloud storage cat` on it returned 404, and so did `gcloud storage rm`. A controlled test with `flat.txt` and `nested/deep.txt` isolated it: the session's egress proxy decodes `%2F` in request paths, so any JSON API call that names an object with a slash in it hits the wrong URL. Listing works (the name is a query parameter), uploads work, and the XML API works because its paths carry literal slashes. The fix for state was to drop the backend `prefix` so `default.tfstate` sits at the bucket root. The stale objects were deleted through the XML API. This one needs reporting to whoever owns the environment proxy; M1's data generator writes paths with slashes and will hit it the moment a session tries to read a file back.
+- **The provider rejected the budget's `all_updates_rule`** unless it named a Monitoring channel or a Pub/Sub topic. The block is gone: with no rule set, budget emails go to the billing account's admins, which is the owner. A notification channel can be added when there is somewhere other than an inbox for it to go.
+- **Service account IDs must be 6 to 30 characters.** `agent` was too short; it is `agent-runtime`.
+- **Enabling Cloud Run created the default Compute Engine service account** in the project. Terraform does not manage it and it has no role bindings. Something to keep an eye on when #5 narrows IAM.
+
+### Decisions recorded
+
+- **State bucket per environment, created by `gcloud`, not Terraform.** The bootstrap chicken-and-egg problem is real, and a four-line `make bootstrap` is simpler than a second Terraform root to manage one bucket.
+- **Budget filters on the project number, measured before credits.** The billing account also carries a `$15 Monthly Budget Alert` with no project filter, created by hand in #3. It is left alone; it is a billing-account-wide net, and the Terraform one is the per-project ceiling the plan asks for.
+- **The deployer stays Owner for now.** Removing roles from the identity that runs Terraform, from inside a Terraform run, is a lockout waiting to happen. #5 creates the CI identity with only the roles it needs; the deployer can be narrowed by hand once CI no longer depends on it.
+
+### References
+
+- Root modules and environment separation: https://docs.cloud.google.com/docs/terraform/best-practices/root-modules
+- State in Cloud Storage: https://docs.cloud.google.com/docs/terraform/resource-management/store-state
+- Budget API, `thresholdPercent` and credit treatment: https://docs.cloud.google.com/billing/docs/reference/budget/rest/v1/billingAccounts.budgets
+- BigQuery roles: https://docs.cloud.google.com/bigquery/docs/access-control
+- Dataset-level IAM with Terraform: https://docs.cloud.google.com/bigquery/docs/control-access-to-resources-iam
+- Uniform bucket-level access and object versioning: https://docs.cloud.google.com/storage/docs/uniform-bucket-level-access, https://docs.cloud.google.com/storage/docs/object-versioning
+
 ## What I would change
 
-- Add `terraform fmt -check` and `dbt build` to CI as soon as #4 and M1 land, rather than letting CI stay Python-only for long.
+- `terraform fmt -check` and `validate` are in CI as of #4. Add `dbt build` the same way the moment M1 lands, rather than letting CI lag the code.
+- Have CI post the `terraform plan` output on PRs once #5 gives it an identity, so the owner reviews the plan, not just the HCL.
 - The PR comment with eval results (planned for M3) should reuse this workflow rather than a second one, so there is one CI file to read.
 
 ## Where M0 stands
@@ -100,7 +143,7 @@ Every claim in "What the session found" is the output of a command run in the se
 | Issue | Status |
 | --- | --- |
 | #2 Repo scaffold | Merged in PR [#7](https://github.com/justfetz/packaging-ops-agent/pull/7), CI green |
-| #3 GCP bootstrap | Project, billing, deployer, and environment verified from a session. Two owner steps left: grant `deployer` Billing Account Costs Manager on the billing account, and commit the Gemini transcript |
-| #4 Terraform skeleton | Ready to start once the billing role is granted (the budget resource needs it); everything else it needs is in place |
-| #5 WIF for CI | Blocked on #4 |
+| #3 GCP bootstrap | Project, billing, deployer, and environment verified from a session. The billing role is granted (the budget in #4 proves it). One owner step left: commit the Gemini transcript |
+| #4 Terraform skeleton | Applied to dev: 23 resources, second plan clean, CI checks fmt and validate. Prod root exists and waits for a prod project |
+| #5 WIF for CI | Ready to start. `iamcredentials` is enabled and the datasets, bucket, and agent identity it will reference exist |
 | #6 ADRs | Ready to start |
