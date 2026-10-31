@@ -183,9 +183,9 @@ The repo is the project's memory, and each session is one unit of work that ends
 **One-time setup (you)**
 
 - [x] Create a public GitHub repo (`packaging-ops-agent`) and connect it to Claude Code
-- [ ] Create a dedicated GCP project with billing, plus a **budget alert at $25 and $50** per month
-- [ ] Create a deployer service account with only the roles Terraform needs. Add its key in the Claude Code environment settings as a secret, never in chat
-- [ ] Create a dedicated Claude Code environment for this repo. Allow network access to `*.googleapis.com`, Langfuse, and package managers
+- [x] Create a dedicated GCP project with billing (`packaging-ops-agent-dev`, 2026-10-31). Budget ceiling set at **$25 per month** with alerts at 50%, 90%, and 100%; the budget itself is defined in Terraform in M0.3
+- [x] Create a deployer service account with only the roles Terraform needs. Add its key in the Claude Code environment settings as a secret, never in chat (done as a network secret; the sandbox only ever sees a short-lived token. Owner role for now, narrowed in M0.3)
+- [x] Create a dedicated Claude Code environment for this repo. Allow network access to `*.googleapis.com`, Langfuse, and package managers (also allow `docs.cloud.google.com`, see the M0 build log)
 - [x] Commit this plan to `docs/` in the repo
 - [ ] Commit the Gemini transcript to `docs/source/`
 
@@ -241,6 +241,6 @@ Resume bullets come last, and only with numbers taken from the scoreboard.
 **Decisions for you**
 
 - [x] Repo name: `packaging-ops-agent` (public from day one)
-- [ ] Monthly GCP budget ceiling
-- [ ] Gemini through Vertex AI (recommended) or AI Studio
+- [x] Monthly GCP budget ceiling: $25, alerts at 50%, 90%, and 100%
+- [x] Gemini through Vertex AI (recommended) or AI Studio: Vertex AI, regional endpoint in `us-central1`
 - [ ] Target date for the launch post

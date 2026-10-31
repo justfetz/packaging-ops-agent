@@ -54,6 +54,42 @@ The split follows a dependency order: #3 is manual and unblocks #4, which unbloc
 
 Run 2 is the M0 gate: CI green on an empty app. The nine-second wall time is the baseline to watch as dbt, Terraform checks, and evals join the workflow.
 
+## Issue #3: the GCP project
+
+This is the one owner-task in M0. Jason created the project, linked billing, created the `deployer` service account, and wired its key into the Claude Code environment as a network secret before the session started. The session's job was to verify the result from inside the sandbox, record the values, and find whatever the manual steps missed.
+
+### What the session found
+
+- **Auth works with no key in the sandbox.** The environment sets `GCP_PROJECT_ID` and `CLOUDSDK_AUTH_ACCESS_TOKEN`, and the agent proxy injects a short-lived token on every request to `*.googleapis.com`. `gcloud`, `bq`, and `curl` all work without configuration. `GOOGLE_APPLICATION_CREDENTIALS` is unset and there is no key file. This is what the issue's "no key in the sandbox" check was asking for.
+- **The first `gcloud projects describe` failed anyway**, because a fresh project has the Cloud Resource Manager API disabled, and `gcloud` cannot describe a project without it. The same went for the Cloud Billing and IAM APIs. A new project ships with BigQuery, Cloud Storage, Logging, Monitoring, and a handful of others enabled, and not much else.
+- **Enabled by the session:** `cloudresourcemanager`, `cloudbilling`, `billingbudgets`, `iam`, and `aiplatform`. All are APIs that Terraform in #4 needs anyway (the Google provider calls Resource Manager and IAM for almost everything, and the budget resource calls Billing Budgets). Enabling an API is free and reversible, and dev can be rebuilt at any time, so it fit the "run `gcloud` freely" rule. #4 should declare these as `google_project_service` resources so the list lives in code.
+- **Billing is linked** (`billingEnabled: true`) and the project IAM has two owners: Jason and the `deployer` service account. The service account has exactly one user-managed key, created at 13:01 UTC on 2026-10-31, which matches the issue's "create one JSON key" step.
+- **Gemini and embeddings are reachable in `us-central1`.** `GET publishers/google/models/gemini-2.5-flash` and `.../gemini-embedding-001` on the `us-central1` Vertex AI endpoint both return `launchStage: GA`. That settles the region question the issue left pending: `us-central1` for every regional resource, and the `US` multi-region for BigQuery datasets, so BigQuery and Vertex AI calls stay in the same geography.
+- **BigQuery answers queries** (`SELECT 1` through `bq query`), so M1's `dbt-bigquery` target has nothing in the way.
+
+### What is still blocked, and why
+
+- **Budget alerts are not visible from the session.** `gcloud billing budgets list` on the billing account returns "The caller does not have permission". Project Owner says nothing about the billing account; budgets are a billing-account resource with their own roles. Before #4 can create the budget with Terraform, the `deployer` service account needs **Billing Account Costs Manager** (`roles/billing.costsManager`) on billing account `01B7CD-00412F-D365AB`, granted in the console under Billing → Account management. That role covers creating and listing budgets without granting the ability to change payment settings. The budget can also be created by hand in the console first for an earlier safety net; Terraform can import it later.
+- **The Gemini transcript is not committed yet.** It is not in the repo or in Drive under any obvious name, so that step stays with Jason. `docs/source/README.md` already says where it goes.
+- **Doc verification was impossible from the session.** The Google Cloud documentation now lives at `docs.cloud.google.com` (the `cloud.google.com/...` URLs 301-redirect there), and that host is not in the environment's allowed network list, so every fetch failed with a DNS error. CLAUDE.md requires every technical claim in docs to link to official documentation, which future sessions cannot verify until **`docs.cloud.google.com` is added to the environment's allowed domains**. The references below are the `cloud.google.com` URLs for the claims above, written from memory and not fetched; a human should click each once.
+
+### Decisions recorded
+
+- **Budget ceiling: $25 per month, alerts at 50%, 90%, and 100%.** The plan said "$25 and $50"; the issue tightened it to a single $25 ceiling with three thresholds, which is also how the Cloud Billing budget resource is shaped (one amount, several threshold rules). CLAUDE.md and the plan now say the same thing.
+- **Gemini access through Vertex AI**, not AI Studio: the credentials are IAM, the models are regional, and spend lands on the same budget as everything else. The ADR is #6's job.
+- **Region `us-central1`.** Confirmed empirically above rather than from the locations page, for the reason in the previous section.
+
+### How it was tested
+
+Every claim in "What the session found" is the output of a command run in the session: `gcloud projects describe`, `gcloud billing projects describe`, `gcloud iam service-accounts list` and `keys list`, `gcloud projects get-iam-policy`, `gcloud services list --enabled`, `bq query`, and two `curl` calls to the Vertex AI publisher model endpoint. `make check` still passes; this issue changed only docs.
+
+### References
+
+- Enabling APIs on a project: https://cloud.google.com/service-usage/docs/enable-disable
+- Budgets and the roles that manage them: https://cloud.google.com/billing/docs/how-to/budgets and https://cloud.google.com/billing/docs/how-to/billing-access
+- Vertex AI model locations: https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations
+- BigQuery dataset locations, including the `US` multi-region: https://cloud.google.com/bigquery/docs/locations
+
 ## What I would change
 
 - Add `terraform fmt -check` and `dbt build` to CI as soon as #4 and M1 land, rather than letting CI stay Python-only for long.
@@ -63,8 +99,8 @@ Run 2 is the M0 gate: CI green on an empty app. The nine-second wall time is the
 
 | Issue | Status |
 | --- | --- |
-| #2 Repo scaffold | In PR [#7](https://github.com/justfetz/packaging-ops-agent/pull/7), CI green |
-| #3 GCP bootstrap | Waiting on Jason |
-| #4 Terraform skeleton | Blocked on #3 |
+| #2 Repo scaffold | Merged in PR [#7](https://github.com/justfetz/packaging-ops-agent/pull/7), CI green |
+| #3 GCP bootstrap | Project, billing, deployer, and environment verified from a session. Two owner steps left: grant `deployer` Billing Account Costs Manager on the billing account, and commit the Gemini transcript |
+| #4 Terraform skeleton | Ready to start once the billing role is granted (the budget resource needs it); everything else it needs is in place |
 | #5 WIF for CI | Blocked on #4 |
 | #6 ADRs | Ready to start |
