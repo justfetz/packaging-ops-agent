@@ -92,7 +92,7 @@ Every claim in "What the session found" is the output of a command run in the se
 
 ## Issue #4: the Terraform skeleton
 
-The first infrastructure-as-code PR. Everything issue #3 did by hand, except the project itself and the deployer identity, is now declared under `infra/terraform/` and applied to dev. Decision record: [ADR 0001](../adr/0001-terraform-for-every-gcp-resource.md).
+The first infrastructure-as-code PR. Everything issue #3 did by hand, except the project itself and the deployer identity, is now declared under `infra/terraform/` and applied to dev. Decision record: [ADR 0006](../adr/0006-terraform-for-every-gcp-resource.md).
 
 ### What was built
 
@@ -132,11 +132,40 @@ The first infrastructure-as-code PR. Everything issue #3 did by hand, except the
 - Dataset-level IAM with Terraform: https://docs.cloud.google.com/bigquery/docs/control-access-to-resources-iam
 - Uniform bucket-level access and object versioning: https://docs.cloud.google.com/storage/docs/uniform-bucket-level-access, https://docs.cloud.google.com/storage/docs/object-versioning
 
+## Issue #6: the foundational ADRs
+
+Five decision records in `docs/adr/`, written from the plan, the M0.2 findings, and the official docs. The hard part was not the writing; it was the verifying.
+
+### What the records say
+
+| ADR | Decision | The client-scale sentence |
+| --- | --- | --- |
+| [0001](../adr/0001-bigquery-over-databricks.md) | BigQuery over Databricks | On-demand per-TiB pricing gives way to editions and slot capacity; the dbt layer is what survives a platform change |
+| [0002](../adr/0002-langgraph-state-machine-over-react-loop.md) | Explicit LangGraph graph over a ReAct loop | The graph is the governance artifact; scale adds nodes and a durable checkpointer, not a new pattern |
+| [0003](../adr/0003-duckdb-for-local-and-ci-dbt-target.md) | DuckDB for local and CI dbt runs | Same pattern; the dispatched-macro layer grows and a sampled real subset replaces the synthetic generator |
+| [0004](../adr/0004-evals-gate-every-pr.md) | Evals as a required PR check | Same gate; the golden set comes from real tickets and production traces, plus a no-regression margin |
+| [0005](../adr/0005-gemini-via-vertex-ai.md) | Gemini through the Vertex AI API | Same decision with VPC Service Controls, CMEK, and Provisioned Throughput turned on |
+
+### What the verification found
+
+- **Vertex AI was renamed on April 22, 2026.** Google now calls it Gemini Enterprise Agent Platform, the Vertex AI docs are frozen, and the old URLs redirect to `docs.cloud.google.com/gemini-enterprise-agent-platform/...`. The endpoint (`aiplatform.googleapis.com`), the IAM permissions, and the SDK flag (`vertexai=True`) did not change. ADR 0005 records both names and the repo keeps saying "Vertex AI" for the API. The plan, written in October 2026, still used the old name, which is a small example of why the plan says to verify every claim.
+- **The model issue #3 verified is already retired.** `gemini-2.5-flash` returned `launchStage: GA` from the `us-central1` endpoint on October 31, and still does, but Google's lifecycle page lists its retirement date as October 20, 2026, and the model page carries a retirement notice. The lifecycle page names `gemini-3.8-flash` or `gemini-3.5-flash-lite` as replacements; the session confirmed both are GA in `us-central1`, as is `gemini-3.5-flash`. CLAUDE.md now names `gemini-3.8-flash` as the starting default, in config, and M2 should treat the model ID as a value to re-check, not a constant.
+- **The DeepEval metric the plan flagged.** DeepEval has no built-in answer-correctness class. Its RAG metrics are `FaithfulnessMetric`, `AnswerRelevancyMetric`, and the three `Contextual*` metrics; answer correctness is written as a custom `GEval` or, here, as a code check for expected facts. ADR 0004 says which.
+- **`docs.cloud.google.com` is reachable now.** The M0.2 blocker is cleared: every Google Cloud link in the five records was fetched and the quoted claims checked against the page text. `cloud.google.com/...` URLs still redirect to the new host, so the records link to `docs.cloud.google.com` directly, except the pricing pages, which stay on `cloud.google.com`.
+- **Every other vendor's docs are still unreachable.** `docs.langchain.com`, `docs.getdbt.com`, `duckdb.org`, `deepeval.com`, `docs.databricks.com`, and `docs.github.com` all fail DNS from the session. The workaround was web search restricted to each official domain, which returns the page title, URL, and quoted passages. Each ADR's References section says which links were fetched and which were confirmed that way, and `docs/adr/README.md` lists the hosts to add to the environment so a future session can fetch them. PyPI is reachable, so package names and versions in the records come from `pypi.org` directly.
+- **The Databricks comparison is about this project, not Databricks.** ADR 0001 argues from the $25 budget and the one-cloud constraint: a SQL warehouse has an auto-stop floor and accrues charges while idle, Free Edition is non-commercial and capped at one 2X-Small warehouse, and BigQuery's on-demand tier plus `maximumBytesBilled` fits a public demo that must fail cheaply. It is not a claim that BigQuery is better in general, which is the honest version of interview story three.
+
+### How it was tested
+
+This issue changed only docs. `make check` passes. The Google Cloud references were fetched with `curl` and grepped for the quoted sentences; the model launch stages came from `GET .../publishers/google/models/{model}` on the `us-central1` endpoint; package versions came from the PyPI JSON API.
+
 ## What I would change
 
 - `terraform fmt -check` and `validate` are in CI as of #4. Add `dbt build` the same way the moment M1 lands, rather than letting CI lag the code.
 - Have CI post the `terraform plan` output on PRs once #5 gives it an identity, so the owner reviews the plan, not just the HCL.
 - The PR comment with eval results (planned for M3) should reuse this workflow rather than a second one, so there is one CI file to read.
+- Add the other vendors' documentation hosts to the Claude Code environment's allowed domains (listed in `docs/adr/README.md`), so the "verify before writing" rule can be followed by fetching rather than searching.
+- Treat the model ID as a dated value. Issue #3 verified `gemini-2.5-flash` on the day it was already past its retirement date. A short `make` target that prints the launch stage of the configured model would have caught it.
 
 ## Where M0 stands
 
@@ -146,4 +175,6 @@ The first infrastructure-as-code PR. Everything issue #3 did by hand, except the
 | #3 GCP bootstrap | Project, billing, deployer, and environment verified from a session. The billing role is granted (the budget in #4 proves it). One owner step left: commit the Gemini transcript |
 | #4 Terraform skeleton | Applied to dev: 23 resources, second plan clean, CI checks fmt and validate. Prod root exists and waits for a prod project |
 | #5 WIF for CI | Ready to start. `iamcredentials` is enabled and the datasets, bucket, and agent identity it will reference exist |
-| #6 ADRs | Ready to start |
+| #6 ADRs | Merged in PR [#9](https://github.com/justfetz/packaging-ops-agent/pull/9): five records, linked from the README |
+
+## Owner notes

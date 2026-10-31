@@ -1,6 +1,6 @@
 # infra/terraform/
 
-Terraform for every GCP resource. Shared modules under `modules/`, and one root per environment under `envs/dev` and `envs/prod`. Each root has its own state bucket (`backend.tfvars`) and its own values (`terraform.tfvars`). Decision record: [ADR 0001](../../docs/adr/0001-terraform-for-every-gcp-resource.md).
+Terraform for every GCP resource. Shared modules under `modules/`, and one root per environment under `envs/dev` and `envs/prod`. Each root has its own state bucket (`backend.tfvars`) and its own values (`terraform.tfvars`). Decision record: [ADR 0006](../../docs/adr/0006-terraform-for-every-gcp-resource.md).
 
 Filled in M0.3 (issue #4). Rules: `terraform plan` runs freely; `terraform apply` to prod needs the owner's go-ahead and `CONFIRM=prod`; dev can be destroyed and rebuilt at any time; no long-lived keys in the repo.
 

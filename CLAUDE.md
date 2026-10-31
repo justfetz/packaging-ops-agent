@@ -13,7 +13,7 @@ The full plan, milestones, and gates are in `docs/PLAN.md`. Current milestone: *
 | Layer | Choice |
 | --- | --- |
 | Language | Python 3.12 (pinned in `.python-version`), managed with `uv` |
-| API and agent | FastAPI, LangGraph, Gemini via Vertex AI |
+| API and agent | FastAPI, LangGraph, Gemini via Vertex AI (Google renamed the product Gemini Enterprise Agent Platform in April 2026; the API is still `aiplatform.googleapis.com`) |
 | Data | GCS landing zone, BigQuery warehouse, dbt (`dbt-bigquery` for dev and prod, `dbt-duckdb` for local and CI) |
 | Vector search | BigQuery vector search and text search |
 | Evals | pytest, DeepEval, custom code checks; golden set in `evals/golden.yaml` |
@@ -22,7 +22,7 @@ The full plan, milestones, and gates are in `docs/PLAN.md`. Current milestone: *
 | Infrastructure | Terraform, dev and prod as separate roots; GitHub Actions with Workload Identity Federation |
 | Secrets | Secret Manager. Never in code, env files, or chat |
 
-One tool per layer. Do not add an alternative without an ADR.
+One tool per layer. Do not add an alternative without an ADR. The reasoning behind each choice is in `docs/adr/`.
 
 ## Repo layout
 
@@ -69,7 +69,7 @@ Planned for later milestones: `make eval` (M3). Always go through `make` rather 
 - SQL that the agent generates must pass the guardrails in order: `sqlglot` parse, single `SELECT` only, allowlisted Gold tables only, enforced `LIMIT`, BigQuery dry run with `maximum_bytes_billed`.
 - Prompts live in versioned files. The prompt version is logged on every trace.
 - Deterministic settings (temperature 0) for SQL generation. The model is set in config so evals can compare models.
-- Every technical claim in docs links to official documentation. Verify before writing; the plan flags unverified details in the source transcript.
+- Every technical claim in docs links to official documentation. Verify before writing; the plan flags unverified details in the source transcript. Google Cloud docs live at `docs.cloud.google.com` (reachable from a session). Other vendors' docs are not reachable from a session; say so in the doc when a link could only be confirmed through search results.
 
 ## How sessions work
 
@@ -77,6 +77,7 @@ Planned for later milestones: `make eval` (M3). Always go through `make` rather 
 - Start by reading this file and the issue. Build, run `make check`, run evals once they exist, push, open the PR.
 - PR description states the change, how it was tested, and the change in eval scores (once there are scores).
 - Draft or update the milestone's `docs/build-log/` entry in the same PR: what was built, how, what broke, what you would change.
+- Every build-log entry ends with an `## Owner notes` section. Claude creates it empty and never writes in it; the owner fills it before merge.
 - Every bug found becomes a new golden question in `evals/golden.yaml` (from M3 on).
 - CI must be green before merge. Claude never merges; the owner reviews and merges.
 
@@ -90,14 +91,14 @@ Planned for later milestones: `make eval` (M3). Always go through `make` rather 
 
 ## GCP
 
-Recorded by M0.2 (issue #3) and M0.3 (issue #4). Dev only for now; prod gets its own project later. Everything below the deployer identity is created by Terraform (`infra/terraform/`, [ADR 0001](docs/adr/0001-terraform-for-every-gcp-resource.md)).
+Recorded by M0.2 (issue #3) and M0.3 (issue #4). Dev only for now; prod gets its own project later. Everything below the deployer identity is created by Terraform (`infra/terraform/`, [ADR 0006](docs/adr/0006-terraform-for-every-gcp-resource.md)).
 
 | Setting | Value |
 | --- | --- |
 | Project ID | `packaging-ops-agent-dev` (project number `925041489941`) |
 | Region | `us-central1` for every regional resource. BigQuery datasets use the `US` multi-region |
 | Budget ceiling | $25 per month, alerts at 50%, 90%, and 100%, measured before credits. `google_billing_budget` in Terraform, scoped to the project |
-| Gemini access | Vertex AI (`aiplatform.googleapis.com`), regional endpoint in `us-central1` |
+| Gemini access | Vertex AI (`aiplatform.googleapis.com`), regional endpoint in `us-central1`. Starting default model `gemini-3.8-flash`, embeddings `gemini-embedding-001`, both set in config. `gemini-2.5-flash` retired on 2026-10-20; see ADR 0005 |
 | Deployer identity | `deployer@packaging-ops-agent-dev.iam.gserviceaccount.com`. Owner on the project and Billing Account Costs Manager on the billing account. Narrowing it is deferred to #5, which gives CI its own identity |
 | Agent identity | `agent-runtime@packaging-ops-agent-dev.iam.gserviceaccount.com`. No key. `roles/bigquery.jobUser` on the project and `roles/bigquery.dataViewer` on `gold` only |
 | Terraform state | `gs://packaging-ops-agent-dev-tfstate`, object `default.tfstate` at the bucket root. Created by `make bootstrap`, not by Terraform |

@@ -1,4 +1,4 @@
-# 0001. Terraform for every GCP resource, dev and prod as separate roots
+# 0006. Terraform for every GCP resource, dev and prod as separate roots
 
 Date: 2026-10-31 · Status: Accepted
 
