@@ -16,7 +16,7 @@ Every GCP resource is declared in Terraform under `infra/terraform/`, with share
 
 - A rebuilt dev project is `make bootstrap ENV=dev` and `make apply ENV=dev`. The budget, the agent's narrow IAM, and the dataset layout come back with it.
 - Two roots mean no workspace switching and no shared state between environments; a mistake in dev cannot touch prod state. The cost is that `main.tf` is duplicated, so a change to one root must be copied to the other in the same PR. A shared environment module would remove the duplication once the roots start to diverge.
-- CI checks `terraform fmt` and `validate` on both roots with no cloud access. `plan` against real state stays a session or local task until issue #5 gives CI an identity through Workload Identity Federation.
+- CI checks `terraform fmt` and `validate` on both roots with no cloud access, and since issue #5 plans dev against real state on every pull request through a read-only identity ([ADR 0007](0007-workload-identity-federation-for-ci.md)). `apply` stays a session or owner task.
 - Backend blocks cannot read variables, so the state bucket name lives in `backend.tfvars` and the Makefile passes it with `-backend-config`.
 - At client scale the same shape holds, with a root per environment and per project, state buckets locked down to the deployer identity, and `plan` output posted to the PR for review before `apply`.
 

@@ -1,6 +1,6 @@
 # Common entry points. CLAUDE.md documents when to use each one.
 .DEFAULT_GOAL := help
-.PHONY: help install lint format test check run terraform-check bootstrap plan apply
+.PHONY: help install lint format test check run terraform-check bootstrap plan show-plan apply
 
 # Terraform roots live under infra/terraform/envs/<ENV>. ENV is dev or prod.
 ENV ?= dev
@@ -8,6 +8,9 @@ TF ?= terraform
 TF_DIR := infra/terraform
 TF_ROOT := $(TF_DIR)/envs/$(ENV)
 TF_INIT := $(TF) -chdir=$(TF_ROOT) init -input=false -backend-config=backend.tfvars
+# Extra arguments for `make plan`. CI passes "-lock=false -out=plan.tfplan":
+# its identity can only read state, and the saved plan feeds `make show-plan`.
+PLAN_FLAGS ?=
 
 # A Claude Code session has a short-lived token in CLOUDSDK_AUTH_ACCESS_TOKEN
 # and no key file. Hand the same token to the Google provider and the GCS
@@ -58,9 +61,12 @@ bootstrap: ## Create the Terraform state bucket for ENV once, with gcloud. Safe 
 			--uniform-bucket-level-access --public-access-prevention; \
 	gcloud storage buckets update "gs://$$bucket" --project="$$project" --versioning
 
-plan: ## terraform plan for ENV=dev|prod. Runs freely
+plan: ## terraform plan for ENV=dev|prod. Runs freely. PLAN_FLAGS adds arguments
 	$(TF_INIT)
-	$(TF) -chdir=$(TF_ROOT) plan -input=false -lock-timeout=60s
+	$(TF) -chdir=$(TF_ROOT) plan -input=false -lock-timeout=60s $(PLAN_FLAGS)
+
+show-plan: ## Print the plan saved by `make plan PLAN_FLAGS=-out=plan.tfplan` as plain text
+	@$(TF) -chdir=$(TF_ROOT) show -no-color plan.tfplan
 
 apply: ## terraform apply for ENV=dev|prod. Prod additionally needs CONFIRM=prod
 ifeq ($(ENV),prod)

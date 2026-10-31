@@ -40,18 +40,85 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Terraform at the version pinned in infra/terraform/.terraform-version
-        working-directory: ${{ runner.temp }}
-        run: |
-          set -euo pipefail
-          version="$(cat "$GITHUB_WORKSPACE/infra/terraform/.terraform-version")"
-          base="https://releases.hashicorp.com/terraform/${version}"
-          curl -sSfLO "${base}/terraform_${version}_linux_amd64.zip"
-          curl -sSfLO "${base}/terraform_${version}_SHA256SUMS"
-          grep "terraform_${version}_linux_amd64.zip" "terraform_${version}_SHA256SUMS" | sha256sum -c -
-          mkdir -p "$HOME/.local/bin"
-          unzip -o -q "terraform_${version}_linux_amd64.zip" -d "$HOME/.local/bin"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - uses: ./.github/actions/setup-terraform
 
       - name: Format check and validate
         run: make terraform-check
+
+  terraform-plan:
+    name: Terraform plan (dev)
+    runs-on: ubuntu-latest
+    # Only a job in this repository can get a GitHub OIDC token that the pool
+    # trusts, so a pull request from a fork skips this job. A skipped required
+    # check does not block the merge; the owner reviews such a PR by hand.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      id-token: write       # mint the OIDC token for Workload Identity Federation
+      pull-requests: write  # post the plan as a comment
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-terraform
+
+      - uses: ./.github/actions/gcp-auth
+
+      # -lock=false because the CI identity can only read the state bucket.
+      # Nothing in CI writes state, so a lock would protect nothing.
+      - name: Plan dev
+        id: plan
+        run: |
+          set -o pipefail
+          make plan ENV=dev PLAN_FLAGS="-lock=false -no-color -out=plan.tfplan" 2>&1 | tee plan-output.txt
+          make show-plan ENV=dev > plan.txt
+          summary="$(grep -E '^(Plan: |No changes\.)' plan-output.txt | tail -1 || true)"
+          echo "summary=${summary:-Plan produced no summary line}" >> "$GITHUB_OUTPUT"
+          echo "### Terraform plan (dev)" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "${summary:-Plan produced no summary line}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment the plan on the PR
+        if: always() && steps.plan.outcome != 'skipped'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          PLAN_OUTCOME: ${{ steps.plan.outcome }}
+          PLAN_SUMMARY: ${{ steps.plan.outputs.summary }}
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- terraform-plan:dev -->';
+            const limit = 60000; // GitHub caps a comment at 65536 characters
+            const read = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return ''; } };
+            let body = read('plan.txt');
+            if (!body.trim()) body = read('plan-output.txt');
+            if (body.length > limit) {
+              body = body.slice(0, limit) + '\n\n... truncated. The full plan is in the job log.';
+            }
+            const ok = process.env.PLAN_OUTCOME === 'success';
+            const title = ok ? `Terraform plan for dev: ${process.env.PLAN_SUMMARY}` : 'Terraform plan for dev failed';
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const comment = [
+              marker,
+              `### ${title}`,
+              '',
+              `Commit ${context.payload.pull_request.head.sha.slice(0, 7)} · [job log](${run}) · identity \`github-ci@packaging-ops-agent-dev\` via Workload Identity Federation, no stored key.`,
+              '',
+              '<details><summary>Show plan</summary>',
+              '',
+              '```text',
+              body.trimEnd(),
+              '```',
+              '',
+              '</details>',
+            ].join('\n');
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: context.issue.number, per_page: 100,
+            });
+            const existing = comments.find((c) => c.body && c.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body: comment });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body: comment });
+            }

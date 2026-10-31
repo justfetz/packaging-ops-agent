@@ -1,0 +1,21 @@
+name: Set up Terraform
+description: >-
+  Install the Terraform version pinned in infra/terraform/.terraform-version
+  straight from releases.hashicorp.com, verified against its SHA256SUMS, and
+  put it on PATH. No third-party action and no floating version.
+runs:
+  using: composite
+  steps:
+    - name: Install Terraform
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      run: |
+        set -euo pipefail
+        version="$(cat "$GITHUB_WORKSPACE/infra/terraform/.terraform-version")"
+        base="https://releases.hashicorp.com/terraform/${version}"
+        curl -sSfLO "${base}/terraform_${version}_linux_amd64.zip"
+        curl -sSfLO "${base}/terraform_${version}_SHA256SUMS"
+        grep "terraform_${version}_linux_amd64.zip" "terraform_${version}_SHA256SUMS" | sha256sum -c -
+        mkdir -p "$HOME/.local/bin"
+        unzip -o -q "terraform_${version}_linux_amd64.zip" -d "$HOME/.local/bin"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
