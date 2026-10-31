@@ -69,9 +69,11 @@ jobs:
       # Nothing in CI writes state, so a lock would protect nothing.
       - name: Plan dev
         id: plan
+        env:
+          TF_CLI_ARGS: -no-color  # init and plan output both end up in the PR comment
         run: |
           set -o pipefail
-          make plan ENV=dev PLAN_FLAGS="-lock=false -no-color -out=plan.tfplan" 2>&1 | tee plan-output.txt
+          make plan ENV=dev PLAN_FLAGS="-lock=false -out=plan.tfplan" 2>&1 | tee plan-output.txt
           make show-plan ENV=dev > plan.txt
           summary="$(grep -E '^(Plan: |No changes\.)' plan-output.txt | tail -1 || true)"
           echo "summary=${summary:-Plan produced no summary line}" >> "$GITHUB_OUTPUT"
@@ -92,7 +94,13 @@ jobs:
             const limit = 60000; // GitHub caps a comment at 65536 characters
             const read = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return ''; } };
             let body = read('plan.txt');
-            if (!body.trim()) body = read('plan-output.txt');
+            if (!body.trim()) {
+              // The plan failed before it could be rendered: show the raw
+              // output from the plan command onward, without the init chatter.
+              body = read('plan-output.txt');
+              const at = body.search(/^terraform .* plan /m);
+              if (at > 0) body = body.slice(at);
+            }
             if (body.length > limit) {
               body = body.slice(0, limit) + '\n\n... truncated. The full plan is in the job log.';
             }
