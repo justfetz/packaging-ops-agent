@@ -81,18 +81,22 @@ Planned for later milestones: `make eval` (M3) and `make plan ENV=dev|prod` (M0.
 - Ask first: `terraform apply` to prod, anything that deletes data, anything that changes billing or IAM in prod.
 - Dev can be torn down and rebuilt at any time.
 - Keys and secrets never appear in code, env files committed to the repo, PR text, or chat. CI authenticates to GCP with Workload Identity Federation, not a stored key.
-- Cost controls: Cloud Run scales to zero, BigQuery stays on on-demand pricing with byte caps, nothing always-on in the MVP. Budget alerts at $25 and $50 per month.
+- Cost controls: Cloud Run scales to zero, BigQuery stays on on-demand pricing with byte caps, nothing always-on in the MVP. Budget ceiling of $25 per month with alerts at 50%, 90%, and 100%.
 
 ## GCP
 
-Filled in by M0.2 once the project exists.
+Recorded by M0.2 (issue #3). Dev only for now; prod gets its own project later.
 
 | Setting | Value |
 | --- | --- |
-| Project ID | _pending_ |
-| Region | _pending_ |
-| Budget ceiling | _pending_ |
-| Gemini access | _pending_ (Vertex AI recommended) |
+| Project ID | `packaging-ops-agent-dev` (project number `925041489941`) |
+| Region | `us-central1` for every regional resource. BigQuery datasets use the `US` multi-region |
+| Budget ceiling | $25 per month, alerts at 50%, 90%, and 100%. Defined in Terraform (issue #4) |
+| Gemini access | Vertex AI (`aiplatform.googleapis.com`), regional endpoint in `us-central1` |
+| Deployer identity | `deployer@packaging-ops-agent-dev.iam.gserviceaccount.com`. Owner for now; #4 narrows it |
+| Session auth | The Claude Code environment injects a short-lived token for `*.googleapis.com` and sets `GCP_PROJECT_ID`. No key file exists in the sandbox |
+
+`gcloud`, `bq`, and `curl` against `*.googleapis.com` work in a session with no setup. Pass `--project "$GCP_PROJECT_ID"` explicitly; the sandbox has no default project configured. CI uses Workload Identity Federation instead (issue #5).
 
 ## Definition of done
 
