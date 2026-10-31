@@ -132,6 +132,75 @@ The first infrastructure-as-code PR. Everything issue #3 did by hand, except the
 - Dataset-level IAM with Terraform: https://docs.cloud.google.com/bigquery/docs/control-access-to-resources-iam
 - Uniform bucket-level access and object versioning: https://docs.cloud.google.com/storage/docs/uniform-bucket-level-access, https://docs.cloud.google.com/storage/docs/object-versioning
 
+## Issue #5: CI reaches GCP with no key
+
+GitHub Actions now authenticates to the dev project through Workload Identity Federation and runs `terraform plan` on every pull request. Decision record: [ADR 0007](../adr/0007-workload-identity-federation-for-ci.md).
+
+### What was built
+
+- **A sixth module, `github_actions_ci`**, in both roots: a Workload Identity Pool (`github-actions`), an OIDC provider (`github-oidc`) for `token.actions.githubusercontent.com`, and a `github-ci` service account. The provider's attribute condition requires the token's `repository_owner_id` and `repository_id` to equal this repository's numeric IDs (`12513697` and `1440268397`, from `gh api repos/justfetz/packaging-ops-agent`), and only a principal with that repository ID may impersonate the account. Google's pipeline guidance says to prefer the ID claims over names because a deleted GitHub name can be claimed by someone else; the names are mapped too, for logs.
+- **One read-only role for the CI identity:** `roles/viewer` on the project. It lets a plan refresh every resource in the root, state bucket and budget included, and lets nothing be changed. `sts.googleapis.com` joined the enabled APIs; `iamcredentials` was already there from #4.
+- **Two composite actions.** `.github/actions/setup-terraform` holds the pinned-version install that the `terraform` job used to inline, so both Terraform jobs share it. `.github/actions/gcp-auth` wraps `google-github-actions/auth` v3.0.0 (pinned by SHA) with the provider name and service account as input defaults, so any later job that needs GCP is one `uses:` line.
+- **A `terraform-plan` CI job** that authenticates with `gcp-auth`, runs `make plan ENV=dev PLAN_FLAGS="-lock=false -out=plan.tfplan"`, renders the saved plan with `make show-plan`, and posts it on the pull request under a marker comment that later runs update rather than duplicate. The `Plan: N to add…` line goes in the job summary and the comment title. Fork pull requests skip the job, because a fork cannot obtain a token the pool trusts.
+- **Makefile:** `PLAN_FLAGS` on `plan`, and a `show-plan` target. Everything CI runs is still a `make` target.
+
+### How it was tested
+
+`make plan ENV=dev` showed 7 to add; `make apply ENV=dev` created the pool, provider, service account, and bindings; `make plan ENV=dev PLAN_FLAGS="-lock=false -out=plan.tfplan"` followed by `make show-plan` rendered a clean text plan the way CI does. `make check` passes with the new module in both roots. The end-to-end test of the federation itself was the pull request for this issue, [#12](https://github.com/justfetz/packaging-ops-agent/pull/12): its `Terraform plan (dev)` check was the first job to exchange a GitHub token for a Google one.
+
+| Run | `Terraform plan (dev)` | Time | What happened |
+| --- | --- | --- | --- |
+| 1 | Failed | 20 s | WIF worked first try: token exchange, backend init, state read, and every refresh including the budget. The one error was refreshing the state-bucket IAM binding (`storage.buckets.getIamPolicy` denied). The failure comment was posted on the PR as designed |
+| 2 | Passed | 19 s | Bucket binding and the never-applied billing binding removed; `roles/viewer` alone. The job updated its own comment in place: "No changes. Your infrastructure matches the configuration." |
+
+### What broke, or could not be done from a session
+
+- **The failure comment carried colour codes.** When the plan fails, the job falls back to the raw command output, and `terraform init` had printed ANSI escapes into it. `TF_CLI_ARGS=-no-color` on the step now covers every Terraform command, and the fallback starts at the plan command rather than the init chatter.
+- **A read-only identity cannot refresh a resource-level IAM binding.** The first draft granted `github-ci` `roles/storage.objectViewer` on the state bucket, to make the state dependency explicit. Terraform refreshes that binding by reading the bucket's IAM policy, which needs `storage.buckets.getIamPolicy`, and neither Viewer nor objectViewer has it: the first CI run failed there and nowhere else. Project-level bindings refresh through `resourcemanager.projects.getIamPolicy`, which Viewer does have. The binding came out; Viewer's `storage.objects.get` had been reading the state all along.
+- **The budget needed no billing-account role, which was a surprise.** Budgets are billing-account resources, and the first draft declared `roles/billing.viewer` for `github-ci` on the billing account, a grant only a Billing Account Administrator can make (the deployer has Costs Manager; the session's own policy also refused the apply as a protected-scope change). The first CI run then refreshed `module.budget` with project Viewer alone, before the bucket error stopped the plan. Google's billing roles page describes project-scoped billing information as including budgets and alerts. The declared binding was removed before it was ever applied, which also removed what would have been the only manual step in this issue.
+- **Branch protection is an admin call the session cannot make.** `gh api .../branches/main/protection` returned `Resource not accessible by integration`: the GitHub App token this session holds has no administration scope. **Owner step**, either in Settings → Branches → Add rule for `main`, or with one command:
+
+  ```bash
+  gh api -X PUT repos/justfetz/packaging-ops-agent/branches/main/protection --input - <<'JSON'
+  {
+    "required_status_checks": {
+      "strict": false,
+      "checks": [
+        {"context": "Lint and test"},
+        {"context": "Terraform fmt and validate"},
+        {"context": "Terraform plan (dev)"}
+      ]
+    },
+    "enforce_admins": true,
+    "required_pull_request_reviews": {"required_approving_review_count": 0},
+    "restrictions": null,
+    "allow_force_pushes": false,
+    "allow_deletions": false,
+    "required_conversation_resolution": true
+  }
+  JSON
+  ```
+
+  Zero required approvals, because a sole owner cannot approve their own pull request and the gate here is CI plus the owner's review-and-merge. `enforce_admins` so the rule binds the owner too. Required check names are the job names in `ci.yml`; renaming a job means updating the rule.
+- **Owner is not enough to impersonate.** The session tried `gcloud auth print-access-token --impersonate-service-account=github-ci@…` to rehearse the CI plan with the CI identity's permissions. `roles/owner` does not include `iam.serviceAccounts.getAccessToken`; that is Service Account Token Creator, granted on purpose. Rather than add a binding just for a test, the PR's own CI run was the test, and it found the two things above that a rehearsal would have found ten minutes earlier.
+- **Action versions, again.** `google-github-actions/auth` is on v3.0.0 (Node 24, "removes old parameters"; `workload_identity_provider` and `service_account` are unchanged), and `actions/github-script` is on v8.0.0 with v9 out and ESM-only. `github.com` release pages are not fetchable from a session, so the commit SHAs for the two pins came from search results that quoted the release pages, and the workflow records the version next to each SHA.
+- **GitHub changed the OIDC subject format** for repositories created after July 15, 2026, which includes this one: `sub` is now `repo:OWNER@OWNER_ID/REPO@REPO_ID:…`. Nothing here depends on `sub` beyond mapping it to `google.subject`, whose 127-character limit the new format still fits for this repository's branch names; the trust uses the ID claims directly.
+
+### Decisions recorded
+
+- **A plan-only identity, separate from the deployer.** CI can show what would change and cannot change it. Applies stay with sessions and the owner, which keeps the "ask first" rules meaningful. A future `apply` on `main` gets its own service account and a principal set filtered on `attribute.ref`, which is why `ref` is already mapped.
+- **Trust pinned to numeric IDs**, with the repository name kept as an attribute for readability. Recreating the repository under the same name breaks CI by design.
+- **Plan comments through `actions/github-script` with a marker**, not `gh pr comment --edit-last`. The marker survives a second bot comment (the eval results planned for M3) without the two overwriting each other.
+- **`-lock=false` in CI.** The identity cannot write the state bucket, so it cannot take the lock, and a read-only plan has nothing to protect.
+
+### References
+
+- Workload Identity Federation with deployment pipelines: https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines
+- Best practices for Workload Identity Federation: https://docs.cloud.google.com/iam/docs/best-practices-for-using-workload-identity-federation
+- Billing roles and permissions: https://docs.cloud.google.com/billing/docs/how-to/billing-access
+- GitHub OIDC reference (confirmed through search results; `docs.github.com` is not reachable from a session): https://docs.github.com/en/actions/reference/security/oidc
+- GitHub branch protection API: https://docs.github.com/en/rest/branches/branch-protection
+
 ## Issue #6: the foundational ADRs
 
 Five decision records in `docs/adr/`, written from the plan, the M0.2 findings, and the official docs. The hard part was not the writing; it was the verifying.
@@ -162,7 +231,7 @@ This issue changed only docs. `make check` passes. The Google Cloud references w
 ## What I would change
 
 - `terraform fmt -check` and `validate` are in CI as of #4. Add `dbt build` the same way the moment M1 lands, rather than letting CI lag the code.
-- Have CI post the `terraform plan` output on PRs once #5 gives it an identity, so the owner reviews the plan, not just the HCL.
+- CI posts the dev `terraform plan` on every PR as of #5. The next step in that direction is an `apply` job on `main` behind its own identity, so the owner approves a plan and the machine applies that exact file.
 - The PR comment with eval results (planned for M3) should reuse this workflow rather than a second one, so there is one CI file to read.
 - Add the other vendors' documentation hosts to the Claude Code environment's allowed domains (listed in `docs/adr/README.md`), so the "verify before writing" rule can be followed by fetching rather than searching.
 - Treat the model ID as a dated value. Issue #3 verified `gemini-2.5-flash` on the day it was already past its retirement date. A short `make` target that prints the launch stage of the configured model would have caught it.
@@ -174,7 +243,7 @@ This issue changed only docs. `make check` passes. The Google Cloud references w
 | #2 Repo scaffold | Merged in PR [#7](https://github.com/justfetz/packaging-ops-agent/pull/7), CI green |
 | #3 GCP bootstrap | Project, billing, deployer, and environment verified from a session. The billing role is granted (the budget in #4 proves it). One owner step left: commit the Gemini transcript |
 | #4 Terraform skeleton | Applied to dev: 23 resources, second plan clean, CI checks fmt and validate. Prod root exists and waits for a prod project |
-| #5 WIF for CI | Ready to start. `iamcredentials` is enabled and the datasets, bucket, and agent identity it will reference exist |
-| #6 ADRs | Merged in PR [#9](https://github.com/justfetz/packaging-ops-agent/pull/9): five records, linked from the README |
+| #5 WIF for CI | Pool, provider, and `github-ci` applied to dev; `terraform-plan` job in CI, first token exchange succeeded on PR #12. One owner step open: protect `main` |
+| #6 ADRs | Merged in PR [#9](https://github.com/justfetz/packaging-ops-agent/pull/9): five records, linked from the README. #5 added a sixth, ADR 0007 |
 
 ## Owner notes

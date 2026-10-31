@@ -2,7 +2,7 @@
 
 Terraform for every GCP resource. Shared modules under `modules/`, and one root per environment under `envs/dev` and `envs/prod`. Each root has its own state bucket (`backend.tfvars`) and its own values (`terraform.tfvars`). Decision record: [ADR 0006](../../docs/adr/0006-terraform-for-every-gcp-resource.md).
 
-Filled in M0.3 (issue #4). Rules: `terraform plan` runs freely; `terraform apply` to prod needs the owner's go-ahead and `CONFIRM=prod`; dev can be destroyed and rebuilt at any time; no long-lived keys in the repo.
+Filled in M0.3 (issue #4); the CI identity came in M0.4 (issue #5, [ADR 0007](../../docs/adr/0007-workload-identity-federation-for-ci.md)). Rules: `terraform plan` runs freely; `terraform apply` to prod needs the owner's go-ahead and `CONFIRM=prod`; dev can be destroyed and rebuilt at any time; no long-lived keys in the repo.
 
 ## Layout
 
@@ -14,13 +14,14 @@ modules/
   bigquery_datasets/        bronze, silver, gold, evals datasets
   agent_service_account/    Runtime identity: bigquery.jobUser on the project, dataViewer on gold only
   budget/                   google_billing_budget scoped to the project, thresholds at 50, 90, 100 %
+  github_actions_ci/        Workload Identity Pool and GitHub OIDC provider, plus the plan-only CI service account
 envs/dev/, envs/prod/
   versions.tf               Terraform and provider constraints
   backend.tf                GCS backend, configured from backend.tfvars
   backend.tfvars            State bucket name
   providers.tf              google provider
   variables.tf, main.tf, outputs.tf
-  terraform.tfvars          Project ID, billing account, budget, destroyable flag
+  terraform.tfvars          Project ID, billing account, budget, destroyable flag, GitHub repository IDs
   .terraform.lock.hcl       Provider lock, committed
 ```
 
@@ -35,6 +36,8 @@ The two roots are identical apart from their tfvars. Keep them that way: a chang
 | BigQuery datasets | `bronze`, `silver`, `gold`, `evals` | `US` multi-region |
 | Agent service account | `agent-runtime@packaging-ops-agent-dev.iam.gserviceaccount.com` | No key. `roles/bigquery.jobUser` on the project, `roles/bigquery.dataViewer` on `gold` and nothing else |
 | Budget | `packaging-ops-agent-dev monthly ceiling`, $25 | On the billing account, filtered to the project, measured before credits. Emails billing-account admins at 50, 90, and 100 % |
+| Workload Identity Pool | `github-actions`, provider `github-oidc` | Issuer `token.actions.githubusercontent.com`. Condition: `repository_owner_id` and `repository_id` equal this repository's. A deleted pool keeps its ID for 30 days |
+| CI service account | `github-ci@packaging-ops-agent-dev.iam.gserviceaccount.com` | No key. `roles/viewer` on the project only; that covers the state bucket and the budget. `roles/iam.workloadIdentityUser` granted to `principalSet://…/attribute.repository_id/1440268397` only |
 
 `destroyable = true` in dev lets `terraform destroy` remove the bucket and datasets even when they hold data. Prod sets it to `false`.
 
@@ -45,6 +48,8 @@ All through `make`, from the repo root:
 ```bash
 make bootstrap ENV=dev        # once per environment: create the state bucket with gcloud
 make plan ENV=dev             # init against the state bucket, then plan
+make plan ENV=dev PLAN_FLAGS="-lock=false -out=plan.tfplan"   # what CI runs: read-only, saved to a file
+make show-plan ENV=dev        # print that saved plan as plain text
 make apply ENV=dev            # plan to a file, apply that file
 make apply ENV=prod CONFIRM=prod   # only with the owner's explicit go-ahead
 make terraform-check          # fmt -check and validate on both roots, no cloud access. Part of make check
@@ -56,31 +61,15 @@ Terraform cannot create the bucket that holds its own state, so `make bootstrap`
 
 The google provider and the GCS backend use Application Default Credentials. In a Claude Code session there is no key file; the Makefile copies the session's short-lived token from `CLOUDSDK_AUTH_ACCESS_TOKEN` into `GOOGLE_OAUTH_ACCESS_TOKEN`, which both the provider and the backend accept. Locally, `gcloud auth application-default login` is enough.
 
-### Running from a Claude Code session
+In GitHub Actions the composite action `.github/actions/gcp-auth` obtains credentials through Workload Identity Federation and writes an external-account credential file that the provider and backend read as ADC. The values it needs are the two outputs of this root, `ci_workload_identity_provider` and `ci_service_account_email`, and they are the action's input defaults. The CI identity can only read, so CI plans with `-lock=false` and never applies.
 
-The session's network policy allows `releases.hashicorp.com` but not `registry.terraform.io`, so `terraform init` cannot fetch the provider the normal way. Install Terraform and the provider from the release host into the scratchpad and point Terraform at a filesystem mirror:
+### Why the CI identity has only project-level roles
 
-```bash
-S=/path/to/scratchpad; V=$(cat infra/terraform/.terraform-version); PV=8.9.0
-mkdir -p "$S/bin" "$S/mirror/registry.terraform.io/hashicorp/google"
-curl -sSO "https://releases.hashicorp.com/terraform/$V/terraform_${V}_linux_amd64.zip"
-curl -sSO "https://releases.hashicorp.com/terraform/$V/terraform_${V}_SHA256SUMS"
-grep linux_amd64.zip "terraform_${V}_SHA256SUMS" | sha256sum -c - && unzip -q "terraform_${V}_linux_amd64.zip" -d "$S/bin"
-curl -sS -o "$S/mirror/registry.terraform.io/hashicorp/google/terraform-provider-google_${PV}_linux_amd64.zip" \
-  "https://releases.hashicorp.com/terraform-provider-google/$PV/terraform-provider-google_${PV}_linux_amd64.zip"
-printf 'provider_installation {\n  filesystem_mirror { path = "%s/mirror" include = ["registry.terraform.io/hashicorp/*"] }\n  direct { exclude = ["registry.terraform.io/hashicorp/*"] }\n}\n' "$S" > "$S/terraformrc"
-export PATH="$S/bin:$PATH" TF_CLI_CONFIG_FILE="$S/terraformrc"
-```
+A plan refreshes every resource in the root, including IAM bindings. Refreshing a project-level binding reads the project IAM policy, which `roles/viewer` allows. Refreshing a bucket-level binding reads that bucket's IAM policy, which needs `storage.buckets.getIamPolicy`, and no read-only role has it; the first CI run failed on exactly that. So anything granted to `github-ci` goes on the project, and the state bucket and the budget are read through Viewer, which the same run proved sufficient.
 
-Verify the provider zip against its `SHA256SUMS` file the same way. Nothing goes in the home directory; the session's sandbox refuses that.
+### Rebuilding dev
 
-### Provider lock file
-
-`.terraform.lock.hcl` was generated from the filesystem mirror, so it records only the `h1:` hash for `linux_amd64`. CI runs on `linux_amd64` and verifies against that hash. On a Mac, run this once in each root and commit the result:
-
-```bash
-terraform -chdir=infra/terraform/envs/dev providers lock -platform=linux_amd64 -platform=darwin_arm64
-```
+`terraform destroy` removes the pool and provider, but Google keeps a deleted pool's ID reserved for 30 days. A rebuild inside that window must either undelete the pool (`gcloud iam workload-identity-pools undelete github-actions --location=global`) before `make apply`, or use a different `pool_id`. Everything else in dev comes back as it was.
 
 ## Known limitation: object names with slashes from a session
 
@@ -102,3 +91,5 @@ The prod project does not exist yet. When it does: create it and link billing as
 - Dataset-level IAM with Terraform: https://docs.cloud.google.com/bigquery/docs/control-access-to-resources-iam
 - Enabling APIs: https://docs.cloud.google.com/service-usage/docs/enable-disable
 - Service accounts: https://docs.cloud.google.com/iam/docs/service-accounts-create
+- Workload Identity Federation with deployment pipelines (GitHub Actions): https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines
+- Workload Identity Federation best practices: https://docs.cloud.google.com/iam/docs/best-practices-for-using-workload-identity-federation

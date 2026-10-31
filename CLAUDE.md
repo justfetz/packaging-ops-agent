@@ -54,7 +54,7 @@ make check     # lint + test + terraform-check, the same as CI
 make run       # uvicorn on http://127.0.0.1:8080
 
 make bootstrap ENV=dev   # once per environment: create the Terraform state bucket with gcloud
-make plan ENV=dev        # terraform plan. Runs freely
+make plan ENV=dev        # terraform plan. Runs freely. PLAN_FLAGS="-out=plan.tfplan" saves it; make show-plan prints it
 make apply ENV=dev       # terraform apply. ENV=prod also needs CONFIRM=prod and the owner's go-ahead
 ```
 
@@ -79,7 +79,7 @@ Planned for later milestones: `make eval` (M3). Always go through `make` rather 
 - Draft or update the milestone's `docs/build-log/` entry in the same PR: what was built, how, what broke, what you would change.
 - Every build-log entry ends with an `## Owner notes` section. Claude creates it empty and never writes in it; the owner fills it before merge.
 - Every bug found becomes a new golden question in `evals/golden.yaml` (from M3 on).
-- CI must be green before merge. Claude never merges; the owner reviews and merges.
+- CI must be green before merge. `main` is protected: changes arrive by pull request with the three CI checks (`Lint and test`, `Terraform fmt and validate`, `Terraform plan (dev)`) passing, and that applies to admins too. Claude never merges; the owner reviews and merges.
 
 ## Permissions and safety
 
@@ -99,14 +99,17 @@ Recorded by M0.2 (issue #3) and M0.3 (issue #4). Dev only for now; prod gets its
 | Region | `us-central1` for every regional resource. BigQuery datasets use the `US` multi-region |
 | Budget ceiling | $25 per month, alerts at 50%, 90%, and 100%, measured before credits. `google_billing_budget` in Terraform, scoped to the project |
 | Gemini access | Vertex AI (`aiplatform.googleapis.com`), regional endpoint in `us-central1`. Starting default model `gemini-3.8-flash`, embeddings `gemini-embedding-001`, both set in config. `gemini-2.5-flash` retired on 2026-10-20; see ADR 0005 |
-| Deployer identity | `deployer@packaging-ops-agent-dev.iam.gserviceaccount.com`. Owner on the project and Billing Account Costs Manager on the billing account. Narrowing it is deferred to #5, which gives CI its own identity |
+| Deployer identity | `deployer@packaging-ops-agent-dev.iam.gserviceaccount.com`. Owner on the project and Billing Account Costs Manager on the billing account. Used by sessions and by the owner for `apply`; CI never uses it. Narrowing it is still open |
+| CI identity | `github-ci@packaging-ops-agent-dev.iam.gserviceaccount.com`. No key. `roles/viewer` on the project and nothing else: enough to `plan` (state bucket and budget included), nothing that can `apply`. Grants for it stay at project level; a resource-level binding cannot be refreshed by a read-only identity. Impersonated only by GitHub Actions jobs from this repository, matched on repository ID, through Workload Identity Pool `github-actions`, provider `github-oidc` ([ADR 0007](docs/adr/0007-workload-identity-federation-for-ci.md)) |
 | Agent identity | `agent-runtime@packaging-ops-agent-dev.iam.gserviceaccount.com`. No key. `roles/bigquery.jobUser` on the project and `roles/bigquery.dataViewer` on `gold` only |
 | Terraform state | `gs://packaging-ops-agent-dev-tfstate`, object `default.tfstate` at the bucket root. Created by `make bootstrap`, not by Terraform |
 | Landing bucket | `gs://packaging-ops-agent-dev-landing`, versioned, uniform access, public access prevented |
 | BigQuery datasets | `bronze`, `silver`, `gold`, `evals` in the `US` multi-region |
 | Session auth | The Claude Code environment injects a short-lived token for `*.googleapis.com` and sets `GCP_PROJECT_ID`. No key file exists in the sandbox. The Makefile hands the same token to Terraform through `GOOGLE_OAUTH_ACCESS_TOKEN` |
 
-`gcloud`, `bq`, and `curl` against `*.googleapis.com` work in a session with no setup. Pass `--project "$GCP_PROJECT_ID"` explicitly; the sandbox has no default project configured. CI uses Workload Identity Federation instead (issue #5).
+`gcloud`, `bq`, and `curl` against `*.googleapis.com` work in a session with no setup. Pass `--project "$GCP_PROJECT_ID"` explicitly; the sandbox has no default project configured.
+
+CI authenticates differently. A job declares `permissions: id-token: write` and calls the composite action `.github/actions/gcp-auth`, which runs `google-github-actions/auth` with the pool provider and the CI service account. GitHub mints an OIDC token for the job, Google's Security Token Service checks it against the provider's condition (this repository's numeric ID and owner ID), and the job gets a short-lived token for `github-ci`. The action writes a credential file that the Terraform google provider, the GCS backend, `gcloud`, and `bq` all pick up as Application Default Credentials. Nothing is stored in GitHub: no secret, no key, no variable. The `terraform-plan` job uses this to plan dev with `-lock=false` on every pull request from this repository and posts the plan as a PR comment; fork PRs skip it. Any later CI job that needs GCP, such as evals, reuses the same action and adds roles to `github-ci` in Terraform.
 
 Two session limits to know about. `registry.terraform.io` is not reachable, so Terraform and the google provider are installed from `releases.hashicorp.com` into the scratchpad with a filesystem mirror (steps in `infra/terraform/README.md`). And the session proxy decodes `%2F` in request paths, so a GCS object under a "folder" cannot be read or deleted by name through the JSON API from the sandbox; list and upload work, and the XML API path form works. Keep that in mind when M1 writes to the landing bucket.
 

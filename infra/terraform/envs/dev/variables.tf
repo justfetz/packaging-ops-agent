@@ -47,3 +47,18 @@ variable "destroyable" {
   type        = bool
   default     = false
 }
+
+variable "github_repository" {
+  description = "GitHub repository whose Actions workflows may authenticate to this environment, as owner/name."
+  type        = string
+}
+
+variable "github_repository_id" {
+  description = "Numeric ID of that repository. The Workload Identity Federation trust keys on IDs, which GitHub never reuses."
+  type        = string
+}
+
+variable "github_repository_owner_id" {
+  description = "Numeric GitHub ID of the repository owner."
+  type        = string
+}

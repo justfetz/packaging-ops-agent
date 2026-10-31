@@ -10,3 +10,9 @@ budget_amount_usd  = 25
 
 # Prod keeps its data. A destroy fails if a bucket or dataset is not empty.
 destroyable = false
+
+# GitHub Actions authenticates through Workload Identity Federation. The IDs
+# come from `gh api repos/justfetz/packaging-ops-agent` (.id and .owner.id).
+github_repository          = "justfetz/packaging-ops-agent"
+github_repository_id       = "1440268397"
+github_repository_owner_id = "12513697"

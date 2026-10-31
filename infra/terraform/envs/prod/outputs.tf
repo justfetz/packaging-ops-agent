@@ -24,3 +24,13 @@ output "agent_service_account_email" {
 output "budget_name" {
   value = module.budget.name
 }
+
+output "ci_workload_identity_provider" {
+  description = "workload_identity_provider input for google-github-actions/auth in .github/actions/gcp-auth."
+  value       = module.github_actions_ci.workload_identity_provider
+}
+
+output "ci_service_account_email" {
+  description = "service_account input for google-github-actions/auth."
+  value       = module.github_actions_ci.service_account_email
+}

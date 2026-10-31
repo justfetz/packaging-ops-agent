@@ -14,14 +14,16 @@ locals {
     "cloudbilling.googleapis.com",         # billing lookups
     "cloudresourcemanager.googleapis.com", # project lookups, used by the provider
     "iam.googleapis.com",                  # service accounts
-    "iamcredentials.googleapis.com",       # token exchange for Workload Identity Federation (issue #5)
+    "iamcredentials.googleapis.com",       # service account impersonation for Workload Identity Federation
     "logging.googleapis.com",
     "monitoring.googleapis.com",
     "run.googleapis.com",           # Cloud Run
     "secretmanager.googleapis.com", # secrets
     "serviceusage.googleapis.com",  # enabling the rest
     "storage.googleapis.com",       # landing bucket
+    "sts.googleapis.com",           # token exchange for Workload Identity Federation
   ]
+
 
   datasets = {
     bronze = "Raw files loaded as-is from the landing bucket."
@@ -78,6 +80,17 @@ module "budget" {
   display_name       = "${var.project_id} monthly ceiling"
   amount_usd         = var.budget_amount_usd
   threshold_percents = var.budget_threshold_percents
+
+  depends_on = [module.project_services]
+}
+
+module "github_actions_ci" {
+  source                     = "../../modules/github_actions_ci"
+  project_id                 = var.project_id
+  project_number             = data.google_project.this.number
+  github_repository          = var.github_repository
+  github_repository_id       = var.github_repository_id
+  github_repository_owner_id = var.github_repository_owner_id
 
   depends_on = [module.project_services]
 }
