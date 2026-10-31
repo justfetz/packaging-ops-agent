@@ -13,7 +13,7 @@ The full plan, milestones, and gates are in `docs/PLAN.md`. Current milestone: *
 | Layer | Choice |
 | --- | --- |
 | Language | Python 3.12 (pinned in `.python-version`), managed with `uv` |
-| API and agent | FastAPI, LangGraph, Gemini via Vertex AI |
+| API and agent | FastAPI, LangGraph, Gemini via Vertex AI (Google renamed the product Gemini Enterprise Agent Platform in April 2026; the API is still `aiplatform.googleapis.com`) |
 | Data | GCS landing zone, BigQuery warehouse, dbt (`dbt-bigquery` for dev and prod, `dbt-duckdb` for local and CI) |
 | Vector search | BigQuery vector search and text search |
 | Evals | pytest, DeepEval, custom code checks; golden set in `evals/golden.yaml` |
@@ -22,7 +22,7 @@ The full plan, milestones, and gates are in `docs/PLAN.md`. Current milestone: *
 | Infrastructure | Terraform, dev and prod as separate roots; GitHub Actions with Workload Identity Federation |
 | Secrets | Secret Manager. Never in code, env files, or chat |
 
-One tool per layer. Do not add an alternative without an ADR.
+One tool per layer. Do not add an alternative without an ADR. The reasoning behind each choice is in `docs/adr/`.
 
 ## Repo layout
 
@@ -64,7 +64,7 @@ Planned for later milestones: `make eval` (M3) and `make plan ENV=dev|prod` (M0.
 - SQL that the agent generates must pass the guardrails in order: `sqlglot` parse, single `SELECT` only, allowlisted Gold tables only, enforced `LIMIT`, BigQuery dry run with `maximum_bytes_billed`.
 - Prompts live in versioned files. The prompt version is logged on every trace.
 - Deterministic settings (temperature 0) for SQL generation. The model is set in config so evals can compare models.
-- Every technical claim in docs links to official documentation. Verify before writing; the plan flags unverified details in the source transcript.
+- Every technical claim in docs links to official documentation. Verify before writing; the plan flags unverified details in the source transcript. Google Cloud docs live at `docs.cloud.google.com` (reachable from a session). Other vendors' docs are not reachable from a session; say so in the doc when a link could only be confirmed through search results.
 
 ## How sessions work
 
@@ -92,7 +92,7 @@ Recorded by M0.2 (issue #3). Dev only for now; prod gets its own project later.
 | Project ID | `packaging-ops-agent-dev` (project number `925041489941`) |
 | Region | `us-central1` for every regional resource. BigQuery datasets use the `US` multi-region |
 | Budget ceiling | $25 per month, alerts at 50%, 90%, and 100%. Defined in Terraform (issue #4) |
-| Gemini access | Vertex AI (`aiplatform.googleapis.com`), regional endpoint in `us-central1` |
+| Gemini access | Vertex AI (`aiplatform.googleapis.com`), regional endpoint in `us-central1`. Starting default model `gemini-3.8-flash`, embeddings `gemini-embedding-001`, both set in config. `gemini-2.5-flash` retired on 2026-10-20; see ADR 0005 |
 | Deployer identity | `deployer@packaging-ops-agent-dev.iam.gserviceaccount.com`. Owner for now; #4 narrows it |
 | Session auth | The Claude Code environment injects a short-lived token for `*.googleapis.com` and sets `GCP_PROJECT_ID`. No key file exists in the sandbox |
 
