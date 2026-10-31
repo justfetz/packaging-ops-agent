@@ -61,30 +61,15 @@ resource "google_service_account_iam_member" "workload_identity_user" {
 
 # A plan refreshes every resource in the root, so CI needs to read all of
 # them. roles/viewer is the read-only half of the project and grants nothing
-# that mutates.
+# that mutates. The first CI run showed it is also enough outside the
+# project's own resources: storage.objects.get covered the state bucket, and
+# the budget, scoped to this project, refreshed without a billing-account
+# role. The same run showed that a resource-level binding here, such as
+# objectViewer on the state bucket, cannot be refreshed by this identity:
+# reading a bucket's IAM policy needs storage.buckets.getIamPolicy, which no
+# read-only role carries. Keep every grant for this account at project level.
 resource "google_project_iam_member" "viewer" {
   project = var.project_id
   role    = "roles/viewer"
   member  = google_service_account.ci.member
-}
-
-# State lives in a bucket outside Terraform's control. Granting the read
-# explicitly, rather than relying on roles/viewer covering objects, keeps the
-# dependency visible. CI plans with -lock=false, so it never writes here.
-resource "google_storage_bucket_iam_member" "state_reader" {
-  bucket = var.state_bucket
-  role   = "roles/storage.objectViewer"
-  member = google_service_account.ci.member
-}
-
-# The budget is a billing-account resource, so roles/viewer on the project
-# does not cover it. Billing Account Viewer is the smallest predefined role
-# that carries billing.budgets.get; it reads cost data and changes nothing.
-# Whoever applies this needs billing.accounts.setIamPolicy, which Billing
-# Account Administrator has and Costs Manager does not, so the first apply is
-# the owner's, not a session's.
-resource "google_billing_account_iam_member" "budget_reader" {
-  billing_account_id = var.billing_account_id
-  role               = "roles/billing.viewer"
-  member             = google_service_account.ci.member
 }

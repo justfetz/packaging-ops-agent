@@ -24,8 +24,6 @@ locals {
     "sts.googleapis.com",           # token exchange for Workload Identity Federation
   ]
 
-  # Must match the bucket in backend.tfvars, which a backend block cannot read.
-  state_bucket = "${var.project_id}-tfstate"
 
   datasets = {
     bronze = "Raw files loaded as-is from the landing bucket."
@@ -93,8 +91,6 @@ module "github_actions_ci" {
   github_repository          = var.github_repository
   github_repository_id       = var.github_repository_id
   github_repository_owner_id = var.github_repository_owner_id
-  state_bucket               = local.state_bucket
-  billing_account_id         = var.billing_account_id
 
   depends_on = [module.project_services]
 }

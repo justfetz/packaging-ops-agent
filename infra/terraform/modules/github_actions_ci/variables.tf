@@ -40,13 +40,3 @@ variable "account_id" {
   type        = string
   default     = "github-ci"
 }
-
-variable "state_bucket" {
-  description = "Terraform state bucket the CI identity may read, so `terraform plan` can load state."
-  type        = string
-}
-
-variable "billing_account_id" {
-  description = "Billing account that holds this environment's budget. The CI identity needs to read the budget to plan it."
-  type        = string
-}

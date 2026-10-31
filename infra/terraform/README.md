@@ -37,7 +37,7 @@ The two roots are identical apart from their tfvars. Keep them that way: a chang
 | Agent service account | `agent-runtime@packaging-ops-agent-dev.iam.gserviceaccount.com` | No key. `roles/bigquery.jobUser` on the project, `roles/bigquery.dataViewer` on `gold` and nothing else |
 | Budget | `packaging-ops-agent-dev monthly ceiling`, $25 | On the billing account, filtered to the project, measured before credits. Emails billing-account admins at 50, 90, and 100 % |
 | Workload Identity Pool | `github-actions`, provider `github-oidc` | Issuer `token.actions.githubusercontent.com`. Condition: `repository_owner_id` and `repository_id` equal this repository's. A deleted pool keeps its ID for 30 days |
-| CI service account | `github-ci@packaging-ops-agent-dev.iam.gserviceaccount.com` | No key. `roles/viewer` on the project, `roles/storage.objectViewer` on the state bucket, `roles/billing.viewer` on the billing account. `roles/iam.workloadIdentityUser` granted to `principalSet://…/attribute.repository_id/1440268397` only |
+| CI service account | `github-ci@packaging-ops-agent-dev.iam.gserviceaccount.com` | No key. `roles/viewer` on the project only; that covers the state bucket and the budget. `roles/iam.workloadIdentityUser` granted to `principalSet://…/attribute.repository_id/1440268397` only |
 
 `destroyable = true` in dev lets `terraform destroy` remove the bucket and datasets even when they hold data. Prod sets it to `false`.
 
@@ -63,42 +63,9 @@ The google provider and the GCS backend use Application Default Credentials. In 
 
 In GitHub Actions the composite action `.github/actions/gcp-auth` obtains credentials through Workload Identity Federation and writes an external-account credential file that the provider and backend read as ADC. The values it needs are the two outputs of this root, `ci_workload_identity_provider` and `ci_service_account_email`, and they are the action's input defaults. The CI identity can only read, so CI plans with `-lock=false` and never applies.
 
-### The one apply a session cannot do
+### Why the CI identity has only project-level roles
 
-`google_billing_account_iam_member.budget_reader` grants the CI identity Billing Account Viewer so `plan` can refresh the budget. Setting IAM on a billing account needs Billing Account Administrator; the deployer has Costs Manager. The owner runs that apply once per environment with their own credentials:
-
-```bash
-gcloud auth application-default login
-make apply ENV=dev
-```
-
-Until it is applied, the `terraform-plan` CI job fails while refreshing `module.budget`.
-
-### Running from a Claude Code session
-
-The session's network policy allows `releases.hashicorp.com` but not `registry.terraform.io`, so `terraform init` cannot fetch the provider the normal way. Install Terraform and the provider from the release host into the scratchpad and point Terraform at a filesystem mirror:
-
-```bash
-S=/path/to/scratchpad; V=$(cat infra/terraform/.terraform-version); PV=8.9.0
-mkdir -p "$S/bin" "$S/mirror/registry.terraform.io/hashicorp/google"
-curl -sSO "https://releases.hashicorp.com/terraform/$V/terraform_${V}_linux_amd64.zip"
-curl -sSO "https://releases.hashicorp.com/terraform/$V/terraform_${V}_SHA256SUMS"
-grep linux_amd64.zip "terraform_${V}_SHA256SUMS" | sha256sum -c - && unzip -q "terraform_${V}_linux_amd64.zip" -d "$S/bin"
-curl -sS -o "$S/mirror/registry.terraform.io/hashicorp/google/terraform-provider-google_${PV}_linux_amd64.zip" \
-  "https://releases.hashicorp.com/terraform-provider-google/$PV/terraform-provider-google_${PV}_linux_amd64.zip"
-printf 'provider_installation {\n  filesystem_mirror { path = "%s/mirror" include = ["registry.terraform.io/hashicorp/*"] }\n  direct { exclude = ["registry.terraform.io/hashicorp/*"] }\n}\n' "$S" > "$S/terraformrc"
-export PATH="$S/bin:$PATH" TF_CLI_CONFIG_FILE="$S/terraformrc"
-```
-
-Verify the provider zip against its `SHA256SUMS` file the same way. Nothing goes in the home directory; the session's sandbox refuses that.
-
-### Provider lock file
-
-`.terraform.lock.hcl` was generated from the filesystem mirror, so it records only the `h1:` hash for `linux_amd64`. CI runs on `linux_amd64` and verifies against that hash. On a Mac, run this once in each root and commit the result:
-
-```bash
-terraform -chdir=infra/terraform/envs/dev providers lock -platform=linux_amd64 -platform=darwin_arm64
-```
+A plan refreshes every resource in the root, including IAM bindings. Refreshing a project-level binding reads the project IAM policy, which `roles/viewer` allows. Refreshing a bucket-level binding reads that bucket's IAM policy, which needs `storage.buckets.getIamPolicy`, and no read-only role has it; the first CI run failed on exactly that. So anything granted to `github-ci` goes on the project, and the state bucket and the budget are read through Viewer, which the same run proved sufficient.
 
 ### Rebuilding dev
 
