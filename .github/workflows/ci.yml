@@ -33,3 +33,25 @@ jobs:
 
       - name: Test
         run: make test
+
+  terraform:
+    name: Terraform fmt and validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Terraform at the version pinned in infra/terraform/.terraform-version
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          version="$(cat "$GITHUB_WORKSPACE/infra/terraform/.terraform-version")"
+          base="https://releases.hashicorp.com/terraform/${version}"
+          curl -sSfLO "${base}/terraform_${version}_linux_amd64.zip"
+          curl -sSfLO "${base}/terraform_${version}_SHA256SUMS"
+          grep "terraform_${version}_linux_amd64.zip" "terraform_${version}_SHA256SUMS" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin"
+          unzip -o -q "terraform_${version}_linux_amd64.zip" -d "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Format check and validate
+        run: make terraform-check

@@ -11,6 +11,7 @@ One short record per major choice. Number them in order (`0001-...md`). Keep eac
 | [0003](0003-duckdb-for-local-and-ci-dbt-target.md) | DuckDB as the dbt target for local runs and CI | Accepted |
 | [0004](0004-evals-gate-every-pr.md) | Evals gate every PR | Accepted |
 | [0005](0005-gemini-via-vertex-ai.md) | Gemini through the Vertex AI API, not the Gemini Developer API | Accepted |
+| [0006](0006-terraform-for-every-gcp-resource.md) | Terraform for every GCP resource, dev and prod as separate roots | Accepted |
 
 ## Template
 
