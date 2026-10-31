@@ -247,3 +247,40 @@ This issue changed only docs. `make check` passes. The Google Cloud references w
 | #6 ADRs | Merged in PR [#9](https://github.com/justfetz/packaging-ops-agent/pull/9): five records, linked from the README. #5 added a sixth, ADR 0007 |
 
 ## Owner notes
+
+- Most of the initial work is setup and plumbing. Lots to learn before a single line of the actual app exists.
+- Setup order: GCP project first, then a Claude Code cloud environment. The environment holds the variables and the GCP secret, scoped to `*.googleapis.com`.
+- I found it useful to keep one "main" chat for directional questions, and separate sessions for the work.
+- Provenance matters: where did the idea come from and why. The Gemini transcript is in `docs/source/` for that reason.
+- One session per issue. The container is built at the start, so if you add a variable afterwards the running session doesn't know.
+- Terraform is the setup scope: GCP resources as files. I still have questions about what it does under the hood.
+- Evals are the whole point of the project.
+- Workload identity: CI proves who it is to Google with a GitHub token instead of a stored key. Still working through it.
+- Issues are the project work. Chat is for discussion.
+- Read every file added or removed in a PR.
+- My own estimate to make something production-ready: 8 to 10 weeks.
+- Gemini also said to keep practicing SQL and Python because top-tier shops still interview for it live. I agree. The plan for that is to write the M3 reference SQL by hand and to rewrite one function per PR myself before merging, rather than separate exercises.
+
+### Why Terraform exists, as it was explained to me
+
+I asked why Google can't just make its resources files, and whether Terraform is about version control. Google did make its own: Deployment Manager launched in 2015 and is now deprecated. Its replacement, Infrastructure Manager, is Google running Terraform for you, and Google co-maintains the Terraform Google provider. AWS has CloudFormation and Azure has Bicep, and both still live, but Terraform won anyway. Three reasons.
+
+**One language for everything.** A real system is not only GCP. This project already has GCP resources, GitHub repository settings, and soon Langfuse and DNS. Terraform has a provider for each, so one plan can show a change that spans a BigQuery dataset and a GitHub branch rule. CloudFormation only knows AWS.
+
+**The plan step.** Terraform compares the files to what exists and shows the diff before doing anything. That turns infrastructure changes into something you can review in a PR, the same as code. "7 to add, 0 to change, 0 to destroy" is the sentence that makes a reviewer comfortable.
+
+**State.** Terraform remembers what it created, so it can detect drift when someone clicks in the console, and it can destroy exactly what it built and nothing else. That is what lets dev be torn down and rebuilt.
+
+Version control is the enabler rather than the reason. Files in git give history, review, and rollback for free, but the point of the files is reproducibility: prod is dev with different variables, and a new project is `apply` rather than a day of clicking.
+
+The lesson landed through our own M0. The service account and billing role I clicked in the console are the only resources Terraform does not know about, and when issue #5 wanted to narrow the deployer's roles it could not safely touch what it did not create. Clicking works once, leaves no record, cannot be reviewed, and cannot be repeated exactly.
+
+### Local versus cloud sessions, as I understand it so far
+
+| | Cloud session | Local session |
+| --- | --- | --- |
+| Runs on | An Anthropic VM that clones the repo from GitHub | My laptop, in my checkout |
+| Credentials | What the environment holds: the deployer secret, proxied GitHub auth | Whatever I am logged into: my own gcloud account, SSH keys, Docker |
+| Lifetime | Keeps running after I close the laptop | Stops when I close the terminal |
+| Sees | Only what is committed and pushed | Uncommitted files, local databases, a browser I can open |
+| Fits | "Work issue #N": autonomous, ends in a PR | Debugging, exploring, running the app and clicking on it |
