@@ -190,6 +190,7 @@ This issue changed only docs. `make check` passes. The Google Cloud references w
 - Issues are the project work. Chat is for discussion.
 - Read every file added or removed in a PR.
 - My own estimate to make something production-ready: 8 to 10 weeks.
+- Gemini also said to keep practicing SQL and Python because top-tier shops still interview for it live. I agree. The plan for that is to write the M3 reference SQL by hand and to rewrite one function per PR myself before merging, rather than separate exercises.
 
 ### Why Terraform exists, as it was explained to me
 
