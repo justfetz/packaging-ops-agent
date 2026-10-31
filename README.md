@@ -6,7 +6,7 @@ A live, public agentic analytics app over a synthetic packaging supply chain, bu
 
 - Build plan: [docs/PLAN.md](docs/PLAN.md)
 - Build log: [docs/build-log/](docs/build-log/)
-- Decision records: [docs/adr/](docs/adr/)
+- Decision records: [docs/adr/](docs/adr/) · [BigQuery over Databricks](docs/adr/0001-bigquery-over-databricks.md) · [LangGraph over a ReAct loop](docs/adr/0002-langgraph-state-machine-over-react-loop.md) · [DuckDB for local and CI](docs/adr/0003-duckdb-for-local-and-ci-dbt-target.md) · [Evals gate every PR](docs/adr/0004-evals-gate-every-pr.md) · [Gemini via Vertex AI](docs/adr/0005-gemini-via-vertex-ai.md)
 - How Claude Code sessions work in this repo: [CLAUDE.md](CLAUDE.md)
 
 ## Run locally
