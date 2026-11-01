@@ -21,7 +21,7 @@ from .shifts import month_key, quarter_key
 ANCHOR_ATL = "C001"
 ANCHOR_LA = "C023"
 SCORE_PATTERNS = ["none", "standard", "male-female", "tele-twin"]
-SCORE_WEIGHTS = {"LA": [0.25, 0.50, 0.20, 0.05], "default": [0.45, 0.40, 0.12, 0.03]}
+SCORE_WEIGHTS = {"LA": [0.10, 0.60, 0.25, 0.05], "default": [0.45, 0.40, 0.12, 0.03]}
 NOTES = [
     None,
     None,

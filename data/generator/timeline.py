@@ -188,8 +188,12 @@ def _advance(t: dt.datetime, gap_seconds: int, pending_fixed: list[StopEvent]) -
 
 
 def _place_standalone(ev: StopEvent, t: dt.datetime, pending_fixed: list[StopEvent]) -> dt.datetime:
-    while pending_fixed and pending_fixed[0].start_time <= t:
-        t = _place_fixed_now(pending_fixed.pop(0), t)
+    # A fixed-time stop that would strike during this stop goes first, at its clock time.
+    while pending_fixed and pending_fixed[0].start_time < t + dt.timedelta(
+        seconds=ev.duration_seconds
+    ):
+        f = pending_fixed.pop(0)
+        t = _place_fixed_now(f, max(t, f.start_time))
     ev.start_time = t
     ev.end_time = t + dt.timedelta(seconds=ev.duration_seconds)
     return ev.end_time
@@ -211,7 +215,9 @@ def _place_run(
     while pending_fixed and pending_fixed[0].start_time <= t:
         t = _place_fixed_now(pending_fixed.pop(0), t)
     run.run_start = t
-    offsets = sorted((rng.randint(0, run.run_seconds), ev) for ev in stops)
+    offsets = sorted(
+        ((rng.randint(0, run.run_seconds), ev) for ev in stops), key=lambda pair: pair[0]
+    )
     wall_end = t + dt.timedelta(seconds=run.run_seconds + sum(e.duration_seconds for e in stops))
     inside: list[StopEvent] = []
     while pending_fixed and pending_fixed[0].start_time < wall_end:

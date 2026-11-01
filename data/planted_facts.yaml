@@ -91,14 +91,18 @@
     CHI: 20
 
 - id: PF-08
-  fact: Chicago averages 11.4 wet-end changes per shift; Atlanta averages 3.2.
+  fact: "Wet-end changes per machine-shift: Chicago 16, LA 10, PA 9, Atlanta 7.5."
   tables: [wet-end runs]
   definition: Wet-end changes per shift = count of distinct wet_end_setup_id / count of machine-shifts (distinct machine, shift_date, shift_no from deduplicated shift summaries), per plant. Every wet-end run starts with a wet-end change.
   expected:
-    CHI: 11.4
-    ATL: 3.2
+    CHI: 16.0
+    LA: 10.0
+    PA: 9.0
+    ATL: 7.5
   tolerance:
     CHI: 0.05
+    LA: 0.05
+    PA: 0.05
     ATL: 0.05
 
 - id: PF-09

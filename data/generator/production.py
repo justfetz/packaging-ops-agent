@@ -27,7 +27,7 @@ from .config import Config, Machine, PlannedFact, Plant
 from .model import Run, Shift, WetEndRun
 from .shifts import quarter_key
 
-RUNS_PER_SHIFT_BOUNDS = {"ATL": (1, 6), "CHI": (6, 17), "PA": (2, 9), "LA": (1, 8)}
+RUNS_PER_SHIFT_BOUNDS = {"ATL": (4, 12), "CHI": (10, 23), "PA": (5, 14), "LA": (4, 16)}
 ORDER_COUNT_WEIGHTS = {1: 1.0, 2: 1.0, 3: 0.6, 4: 0.3, 5: 0.15}
 SPECIALTY_FLUTES = {"BC", "E"}
 EPOCH = dt.datetime(2000, 1, 1)
@@ -210,7 +210,8 @@ def _assign_lengths(
         for w in group:
             flute = cfg.grade_by_code[w.grade_code].flute
             factor = 0.6 if flute in SPECIALTY_FLUTES else 1.0
-            draws.append(rng.lognormvariate(math.log(mean * factor), 0.45))
+            draws.append(rng.lognormvariate(math.log(mean * factor), 0.35))
+        draws = _balance_shifts(cfg, group, draws)
         for w, ft in zip(group, scale_to_sum(draws, mean * len(group), minimum=800), strict=True):
             lengths[id(w)] = ft
 
@@ -249,6 +250,39 @@ def _assign_lengths(
 
     for w in wet_runs:
         w.target_ft = lengths[id(w)]
+
+
+def _estimated_fpm(cfg: Config, w: WetEndRun) -> float:
+    machine = cfg.machine_by_code[w.shift.machine_code]
+    grade = cfg.grade_by_code[w.grade_code]
+    speed = machine.nominal_speed_fpm * machine.speed_factor * grade.speed_factor
+    if w.shift.plant_code == "LA":
+        months_in = (w.shift.shift_date.year - 2025) * 12 + w.shift.shift_date.month - 7
+        speed *= min(1.0, 0.82 + 0.03 * months_in)
+    return speed
+
+
+def _balance_shifts(cfg: Config, group: list[WetEndRun], draws: list[float]) -> list[float]:
+    """Rescale each shift's setups so running time tracks the time available.
+
+    Available = scheduled minutes x machine uptime - the configured unaccounted
+    slack. The plant total is restored afterwards by scale_to_sum, so this only
+    moves feet between shifts; the per-plant mean (PF-07) does not change.
+    """
+    slack = cfg.raw["calendar"]["unaccounted_minutes_per_shift"]
+    by_shift: dict[tuple, list[int]] = defaultdict(list)
+    for i, w in enumerate(group):
+        by_shift[w.shift.key].append(i)
+    out = list(draws)
+    for indices in by_shift.values():
+        w0 = group[indices[0]]
+        machine = cfg.machine_by_code[w0.shift.machine_code]
+        available = (w0.shift.scheduled_minutes * machine.uptime_pct / 100.0 - slack) * 60
+        estimated = sum(draws[i] / _estimated_fpm(cfg, group[i]) * 60 for i in indices)
+        factor = available / estimated if estimated > 0 else 1.0
+        for i in indices:
+            out[i] = draws[i] * factor
+    return out
 
 
 # ----------------------------------------------------------------------------

@@ -23,7 +23,7 @@ from data.generator.facts import CauseNormaliser, compare_facts, measure_facts
 SEED = 42
 # Same seed, same bytes. Any change to the generator or its config changes this
 # value; update it from `make generate` and say why in the PR.
-EXPECTED_CHECKSUM = "46c36d81546c3da6650fc7096c388a99e3d99a97c46b149751c00d2937c3065d"
+EXPECTED_CHECKSUM = "7ca613b708c65e4cd7206d6418768e1efea0addae68f158d73ba91e3324f0ec0"
 MAX_BYTES = 50_000_000
 
 
@@ -173,22 +173,51 @@ def test_roll_width_disagrees_between_feeds(raw_dir: Path) -> None:
     assert disagree / len(lines) == pytest.approx(0.01, abs=0.005)
 
 
-def test_downtime_and_run_time_do_not_fill_the_shift(raw_dir: Path) -> None:
-    """Item 9: micro-stops are not logged, so shifts have unaccounted time.
+def test_unaccounted_time_per_shift(raw_dir: Path) -> None:
+    """Item 9: micro-stops are not logged, so shifts carry some unaccounted time.
 
-    Run wall time (running plus the stops inside runs) is well short of the 480
-    scheduled minutes on average. The odd shift runs over, as the one holding
-    the 212-minute boiler stop does.
+    Unaccounted = scheduled minutes - run wall time (running plus the stops
+    inside runs) - stops between runs. The generator spreads feet so this
+    averages about 50 minutes at Atlanta, PA, and LA. Chicago is higher by
+    construction: PF-11 pins its speeds and PF-07/PF-08 pin its feet, so 16
+    short setups of 9,200 feet cannot fill a shift. The odd shift runs over,
+    as the one holding the 212-minute boiler stop does.
     """
     runs = _csv_rows(raw_dir, "raw__production_runs")
-    wall: Counter[tuple[str, str, str]] = Counter()
+    stops = _jsonl_rows(raw_dir, "raw__stop_events")
+    summaries = _jsonl_rows(raw_dir, "raw__shift_summaries")
+    windows: dict[str, list[tuple[dt.datetime, dt.datetime]]] = {}
+    wall: Counter[tuple[str, str, int]] = Counter()
     for r in runs:
         start = dt.datetime.fromisoformat(r["run_start"])
         end = dt.datetime.fromisoformat(r["run_end"])
         if end > start:
-            wall[(r["machine_code"], r["shift_date"], r["shift_no"])] += (
+            wall[(r["machine_code"], r["shift_date"], int(r["shift_no"]))] += (
                 end - start
-            ).total_seconds()
-    over = sum(1 for seconds in wall.values() if seconds > 480 * 60)
-    assert over / len(wall) < 0.01
-    assert sum(wall.values()) / len(wall) < 0.8 * 480 * 60
+            ).total_seconds() / 60
+            windows.setdefault(r["machine_code"], []).append((start, end))
+    between: Counter[tuple[str, str, int]] = Counter()
+    shifts = {
+        (s["machine_code"], s["shift_date"], s["shift_no"]): (
+            dt.datetime.fromisoformat(s["shift_start"]),
+            dt.datetime.fromisoformat(s["shift_end"]),
+        )
+        for s in summaries
+    }
+    for e in stops:
+        start = dt.datetime.fromisoformat(e["start_time"])
+        if any(a <= start < b for a, b in windows[e["machine_code"]]):
+            continue
+        for key, (s0, s1) in shifts.items():
+            if key[0] == e["machine_code"] and s0 <= start < s1:
+                between[key] += e["duration_seconds"] / 60
+                break
+    by_plant: dict[str, list[float]] = {}
+    for key, (s0, s1) in shifts.items():
+        scheduled = (s1 - s0).total_seconds() / 60
+        by_plant.setdefault(key[0].split("-")[0], []).append(scheduled - wall[key] - between[key])
+    means = {p: sum(v) / len(v) for p, v in by_plant.items()}
+    assert means["ATL"] < 60 and means["PA"] < 60 and means["LA"] < 60, means
+    assert means["CHI"] < 150, means
+    for plant, values in by_plant.items():
+        assert sum(1 for v in values if v < 0) / len(values) < 0.2, plant

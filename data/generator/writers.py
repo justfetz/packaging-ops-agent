@@ -120,7 +120,6 @@ TEST_COLUMNS = [
     "sampled_at",
     "recorded_at",
     "measured_value",
-    "unit",
     "spec_min",
     "spec_max",
     "result",

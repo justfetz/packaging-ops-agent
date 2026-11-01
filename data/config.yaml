@@ -15,6 +15,9 @@ calendar:
     - { shift_no: 1, start: "06:00", minutes: 480 }
     - { shift_no: 2, start: "14:00", minutes: 480 }
     - { shift_no: 3, start: "22:00", minutes: 480 }
+  # Feet are spread across shifts so running time tracks the time available
+  # (scheduled x uptime) minus this slack: unlogged micro-stops and slow running.
+  unaccounted_minutes_per_shift: 50
   overtime_saturdays:
     plants: [ATL, PA]
     months: [10, 11]
@@ -47,10 +50,10 @@ plants:
     data_start: 2024-11-01
     market: High-volume brown box, long sheet runs, one anchor customer on a partnership agreement
     character: The star. Oldest equipment, best numbers. High labor turnover shows up as higher setup time and waste on third shift
-    wet_end_runs_per_shift: 3.2        # PF-08
+    wet_end_runs_per_shift: 7.5        # PF-08
     wet_end_run_length_ft: 38500       # PF-07
-    width_resets_per_shift: 1.1
-    orders_per_wet_end_run: 2.2
+    width_resets_per_shift: 1.6
+    orders_per_wet_end_run: 1.0
     waste_pct_by_shift: { 1: 3.1, 2: 3.6, 3: 4.8 }   # PF-06 pins shifts 1 and 3
     order_change_stop_fraction: 0.10
   - code: CHI
@@ -62,10 +65,10 @@ plants:
     data_start: 2024-11-01
     market: Specialty - E flute, double wall, preprinted liner, short runs, customers close by
     character: The problem child. Many short wet-end runs and hard transitions in and out of specialty grades. Board stored on trailers in winter, moisture problems
-    wet_end_runs_per_shift: 11.4       # PF-08
+    wet_end_runs_per_shift: 16.0       # PF-08
     wet_end_run_length_ft: 9200        # PF-07
     width_resets_per_shift: 2.7        # PF-09
-    orders_per_wet_end_run: 1.4
+    orders_per_wet_end_run: 1.0
     waste_pct_by_shift: { 1: 5.2, 2: 5.4, 3: 5.9 }
     order_change_stop_fraction: 0.22
   - code: PA
@@ -77,10 +80,10 @@ plants:
     data_start: 2024-11-01
     market: Volume for the I-95 and I-81 corridor, long runs, distribution-center customers
     character: Steady. Good equipment, mid-range on everything. The control plant
-    wet_end_runs_per_shift: 5.2
+    wet_end_runs_per_shift: 9.0        # PF-08
     wet_end_run_length_ft: 31000       # PF-07
     width_resets_per_shift: 0.9        # PF-09
-    orders_per_wet_end_run: 2.0
+    orders_per_wet_end_run: 1.0
     waste_pct_by_shift: { 1: 3.3, 2: 3.4, 3: 3.8 }
     order_change_stop_fraction: 0.08
   - code: LA
@@ -92,10 +95,10 @@ plants:
     data_start: 2025-07-01
     market: Specialty produce packaging - fruit and vegetable sheets, moisture-resistant grades, one dominant customer
     character: Newest. Still ramping, so early months are noisy
-    wet_end_runs_per_shift: 4.6
+    wet_end_runs_per_shift: 10.0       # PF-08
     wet_end_run_length_ft: 14600       # PF-07
-    width_resets_per_shift: 1.0
-    orders_per_wet_end_run: 1.6
+    width_resets_per_shift: 1.8
+    orders_per_wet_end_run: 1.0
     waste_pct_by_shift: { 1: 5.0, 2: 5.2, 3: 5.6 }
     order_change_stop_fraction: 0.12
 
@@ -110,7 +113,7 @@ machines:
     roll_widths_in: [110, 105, 100, 95, 90]
     uptime_pct: 93.6
     grade_mix: { 32ECT-C: 0.36, 29ECT-C: 0.10, 40ECT-C: 0.12, 44ECT-C: 0.22, 200C: 0.07, 51ECT-BC: 0.09, 48ECT-BC: 0.04 }
-    speed_factor: 0.96
+    speed_factor: 0.98
   - code: ATL-C2
     plant: ATL
     width_in: 98
@@ -121,7 +124,7 @@ machines:
     roll_widths_in: [98, 93, 88, 83, 78]
     uptime_pct: 94.3
     grade_mix: { 32ECT-C: 0.48, 29ECT-C: 0.16, 40ECT-C: 0.12, 44ECT-C: 0.19, 200C: 0.05 }
-    speed_factor: 0.94
+    speed_factor: 0.96
     short_cutoff_fraction: 0.06      # PF-16: runs with cutoff under 21 inches
   - code: CHI-C1
     plant: CHI
@@ -133,7 +136,7 @@ machines:
     roll_widths_in: [98, 93, 88, 83, 78]
     uptime_pct: 86.9
     grade_mix: { 26ECT-B: 0.12, 32ECT-B: 0.20, 32ECT-E: 0.15, 48ECT-BC: 0.14, 51ECT-BC: 0.12, 71ECT-BC: 0.06, 32ECT-C: 0.11, 29ECT-C: 0.05, 44ECT-C: 0.05 }
-    speed_factor: 0.92
+    speed_factor: 0.70
   - code: PA-C1
     plant: PA
     width_in: 110
@@ -144,7 +147,7 @@ machines:
     roll_widths_in: [110, 105, 100, 95, 90]
     uptime_pct: 95.8                  # PF-03, the only machine above 95
     grade_mix: { 32ECT-C: 0.40, 29ECT-C: 0.12, 40ECT-C: 0.12, 44ECT-C: 0.20, 275C: 0.06, 48ECT-BC: 0.10 }
-    speed_factor: 0.95
+    speed_factor: 0.74
   - code: LA-C1
     plant: LA
     width_in: 98
@@ -153,9 +156,9 @@ machines:
     capability: "B, C, BC; food-grade and moisture-resistant liners"
     weak_spot: Slitter-scorer score alignment drifts, causing score-line quality rejects. Ramp-up noise through 2025
     roll_widths_in: [98, 93, 88, 83, 78]
-    uptime_pct: 90.8
+    uptime_pct: 86.0
     grade_mix: { 32ECT-C: 0.30, 44ECT-C-MR: 0.45, 44ECT-C: 0.10, 40ECT-C: 0.05, 48ECT-BC: 0.10 }
-    speed_factor: 0.85
+    speed_factor: 0.48
 
 # Recipes are liner/medium/liner basis weights in pounds. speed_factor scales
 # the machine nominal speed; starch_lb_per_msf is the companywide typical value.
@@ -237,7 +240,7 @@ downtime_causes:
 # How the planned-downtime share that is not PM or knife change is split
 # between machines (as order-change and no-orders stops). PF-17 fixes the
 # companywide planned share.
-planned_flex_weights: { ATL-C1: 0.04, ATL-C2: 0.04, CHI-C1: 0.70, PA-C1: 0.04, LA-C1: 0.18 }
+planned_flex_weights: { ATL-C1: 0.04, ATL-C2: 0.04, CHI-C1: 0.60, PA-C1: 0.04, LA-C1: 0.28 }
 
 # Missplice events per machine per month. ATL-C1 is scheduled explicitly so
 # that June-August 2025 is the largest three-month window (PF-01).

@@ -2,11 +2,12 @@
 
 Frequencies follow the spec's table, read at the grain the generator has:
 
-- per wet-end setup: ECT (Mullen for the Mullen grades) and moisture, plus a
-  mid-run ECT on setups over 25,000 feet;
-- per machine-shift: caliper once, pin adhesion twice (start and after the break);
+- per wet-end setup: ECT (Mullen for the Mullen grades), and moisture at
+  Chicago, where board comes off trailers in winter;
+- per machine-shift: caliper once, moisture once outside Chicago, pin adhesion
+  twice (start and after the break);
 - per order: warp on double wall and E flute, score quality where scored;
-- ring crush on incoming paper, one or two per plant per weekday.
+- ring crush on incoming paper, once per plant per weekday.
 
 Failure rates are exact per calibrated group: LA score quality by quarter
 (PF-04), Chicago moisture by season (PF-05), Atlanta pin adhesion (PF-20).
@@ -79,11 +80,9 @@ def build_quality(
         at = first.run_start + dt.timedelta(minutes=rng.randint(5, 25))
         strength = "Mullen" if grade.test_basis == "Mullen" else "ECT"
         test(test_type=strength, sampled_at=at, **base)
-        test(test_type="moisture", sampled_at=at + dt.timedelta(minutes=rng.randint(0, 10)), **base)
-        if w.lineal_ft > 25000:
-            last = w.runs[-1]
-            mid = first.run_start + (last.run_end - first.run_start) / 2
-            test(test_type=strength, sampled_at=mid.replace(microsecond=0), **base)
+        if first.plant_code == "CHI":  # board off winter trailers: moisture checked every setup
+            moisture_at = at + dt.timedelta(minutes=rng.randint(0, 10))
+            test(test_type="moisture", sampled_at=moisture_at, **base)
 
     # Per shift
     by_shift: dict[tuple, list[WetEndRun]] = defaultdict(list)
@@ -96,9 +95,12 @@ def build_quality(
         # Pin adhesion twice a shift, at the start and after the midday break.
         for test_type, lo, hi in (
             ("caliper", 30, 120),
+            ("moisture", 20, 100),
             ("pin_adhesion", 15, 90),
             ("pin_adhesion", 250, 330),
         ):
+            if test_type == "moisture" and shift.plant_code == "CHI":
+                continue
             at = shift.start + dt.timedelta(minutes=rng.randint(lo, hi))
             w = min(setups, key=lambda s: abs((s.runs[0].run_start - at).total_seconds()))
             test(
@@ -125,12 +127,12 @@ def build_quality(
             "order_line_id": r.order_line_id,
         }
         end = max(r.run_start, r.run_end)
-        if grade.flute in ("BC", "E") and rng.random() < 0.5:
+        if grade.flute in ("BC", "E") and rng.random() < 0.3:
             test(
                 test_type="warp", sampled_at=end + dt.timedelta(minutes=rng.randint(5, 60)), **base
             )
         scored = line is not None and line.score_pattern != "none"
-        if scored and rng.random() < (0.7 if r.plant_code == "LA" else 0.3):
+        if scored and rng.random() < (0.65 if r.plant_code == "LA" else 0.18):
             test(
                 test_type="score", sampled_at=end + dt.timedelta(minutes=rng.randint(5, 60)), **base
             )
@@ -142,18 +144,17 @@ def build_quality(
             for plant in cfg.plants:
                 if day < plant.data_start:
                     continue
-                for _ in range(rng.randint(1, 2)):
-                    at = dt.datetime.combine(day, dt.time(rng.randint(7, 9), rng.randint(0, 59)))
-                    test(
-                        test_type="ring_crush",
-                        sampled_at=at,
-                        plant_code=plant.code,
-                        machine_code=None,
-                        grade_code=None,
-                        wet_end_setup_id=None,
-                        run_id=None,
-                        order_line_id=None,
-                    )
+                at = dt.datetime.combine(day, dt.time(rng.randint(7, 9), rng.randint(0, 59)))
+                test(
+                    test_type="ring_crush",
+                    sampled_at=at,
+                    plant_code=plant.code,
+                    machine_code=None,
+                    grade_code=None,
+                    wet_end_setup_id=None,
+                    run_id=None,
+                    order_line_id=None,
+                )
         day += dt.timedelta(days=1)
 
     _assign_results(cfg, facts, tests, rng)

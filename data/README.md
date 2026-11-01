@@ -41,7 +41,7 @@ make test                     # includes tests/test_generator.py: facts, checksu
 
 The generator needs only PyYAML and the standard library. Same seed, same bytes: `manifest.json` carries a SHA-256 per file and one combined `checksum`, and `tests/test_generator.py` pins the checksum for seed 42. **Any change to the generator or to `config.yaml` changes the checksum.** Update the constant in the test from the `make generate` output and say so in the PR.
 
-For seed 42 the set is 130 files, 305,046 rows, 47.1 MB, all under the 50 MB ceiling that keeps BigQuery scans in the free tier.
+For seed 42 the set is 130 files, 317,157 rows, 48.5 MB, under the 50 MB ceiling that keeps BigQuery scans in the free tier.
 
 ## Layout in the bucket
 
@@ -68,7 +68,7 @@ Record names follow the vendor-neutral names in the spec's section 6. Tabular fe
 
 ### `raw__production_runs` (CSV, by `run_start`)
 
-One row per **dry-end run**: one order on one knife inside a wet-end setup. 68,360 rows.
+One row per **dry-end run**: one order on one knife inside a wet-end setup. 71,720 rows; most setups hold one order, Atlanta's sometimes two.
 
 | Column | Meaning |
 | --- | --- |
@@ -87,14 +87,14 @@ One row per **dry-end run**: one order on one knife inside a wet-end setup. 68,3
 
 ### `raw__stop_events` (JSON lines, by `start_time`)
 
-One row per stoppage of 30 seconds or more. 15,442 rows.
+One row per stoppage of 30 seconds or more. 17,433 rows.
 
 | Column | Meaning |
 | --- | --- |
 | `event_id`, `machine_code`, `start_time`, `end_time`, `duration_seconds` | |
 | `machine_section` | Section that raised it: wet end, bridge, double backer, slitter-scorer, knife, stacker, discharge, conveyor; null for power and scheduling causes |
 | `fault_code` | Control-system fault from `ref__fault_codes`, where one exists (mostly Maintenance causes) |
-| `cause_code` | The operator's cause, typed by hand: 68 distinct spellings of 15 causes, plus `Other`, plus null (items 1 to 3) |
+| `cause_code` | The operator's cause, typed by hand: about 70 distinct spellings of 15 causes, plus `Other`, plus null (items 1 to 3) |
 | `comment` | Free text. On an `Other` event it names the real cause |
 
 There is no `run_id`; Silver joins stops to runs by machine and time, which the `stops_count` on the run confirms.
@@ -107,7 +107,7 @@ Totals of the run records in the shift (`run_count`, `total_lineal_ft`, `total_s
 
 ### `raw__order_lines` (CSV, by `updated_at`)
 
-One row per order line version; a line edited after download has two rows (item 8). 70,414 rows for 68,360 lines.
+One row per order line version; a line edited after download has two rows (item 8). 73,895 rows for 71,720 lines.
 
 | Column | Meaning |
 | --- | --- |
@@ -122,7 +122,7 @@ One row per order line version; a line edited after download has two rows (item 
 
 ### `raw__quality_tests` (CSV, by `recorded_at`)
 
-One row per test result, plus retests (item 5). 143,033 rows for 137,500 tests.
+One row per test result, plus retests (item 5). 146,312 rows for about 140,700 tests.
 
 | Column | Meaning |
 | --- | --- |
@@ -130,9 +130,9 @@ One row per test result, plus retests (item 5). 143,033 rows for 137,500 tests.
 | `test_type` | `ECT`, `Mullen`, `moisture`, `caliper`, `pin_adhesion`, `warp`, `score`, `ring_crush` |
 | `plant_code`, `machine_code`, `grade_code`, `run_id`, `order_line_id` | Ring crush is a receiving test: plant only |
 | `sampled_at` | When the sample was taken; the fact definitions group by this |
-| `measured_value`, `unit`, `spec_min`, `spec_max`, `result`, `comment` | `result` is `pass` or `fail` |
+| `measured_value`, `spec_min`, `spec_max`, `result`, `comment` | `result` is `pass` or `fail`. Units follow the test type: ECT lbf/in, Mullen psi, moisture %, caliper inches, pin adhesion lbf, warp inches per foot, score % cracked, ring crush lbf |
 
-Frequencies as generated: ECT or Mullen and moisture once per wet-end setup, a second ECT on setups over 25,000 feet; caliper once and pin adhesion twice per machine-shift; warp on half of the double wall and E flute orders; score quality on scored orders (70% at LA, 30% elsewhere); ring crush once or twice per plant per weekday. The spec says "every run" for ECT, caliper, and moisture; the board does not change inside a wet-end setup, so the setup is the run that matters for those tests, and it keeps the feed under 20 MB.
+Frequencies as generated: ECT or Mullen once per wet-end setup; moisture once per setup at Chicago (board off winter trailers) and once per machine-shift elsewhere; caliper once and pin adhesion twice per machine-shift; warp on 30% of double wall and E flute orders; score quality on scored orders (65% at LA, 18% elsewhere); ring crush once per plant per weekday. The spec says "every run" for ECT, caliper, and moisture; the board does not change inside a wet-end setup, so the setup is the run that matters for those tests, and it keeps the feed under 16 MB.
 
 ### Reference feeds
 
@@ -144,7 +144,7 @@ Numbered as in the spec's section 11. Each becomes a Silver rule and a dbt test 
 
 | # | Mess | Where it is made | Rate for seed 42 | Silver rule |
 | --- | --- | --- | --- | --- |
-| 1 | Operator cause codes drift by plant | `downtime._dress`, `config.yaml` `cause_spellings`, `variant_rate_by_plant` | 68 spellings; Chicago 45% variants, PA 8% | Lower-case lookup against the spellings table |
+| 1 | Operator cause codes drift by plant | `downtime._dress`, `config.yaml` `cause_spellings`, `variant_rate_by_plant` | About 70 spellings; Chicago 45% variants, PA 8% | Lower-case lookup against the spellings table |
 | 2 | Cause `Other` with a comment naming the real cause | `downtime._dress`, `OTHER_COMMENTS` | 8% of events | Word-boundary match of `other_comment_keywords` in the comment; exactly one cause matches |
 | 3 | Fault code without operator cause, and vice versa | `downtime._dress` | 85% of Maintenance stops carry a fault code; 15% of those have no cause | Cause from `ref__fault_codes` when `cause_code` is null. Every event has at least one of the two |
 | 4 | Shift summaries re-sent after corrections | `mess.resend_shift_summaries` | 4% of shifts, half exact, half with a corrected waste or stop count | Latest `emitted_at` per machine, shift_date, shift_no |
@@ -152,7 +152,7 @@ Numbered as in the spec's section 11. Each becomes a Silver rule and a dbt test 
 | 6 | LA starch in kilograms for three months | `mess.la_starch_in_kilograms` | LA runs before 2025-10-01 | Multiply by 2.20462 where plant = LA and run_start < 2025-10-01 |
 | 7 | Run end before run start (clock reset) | `mess.clock_reset_runs` | 14 runs at ATL and PA | Exclude from speed; keep for volume and waste |
 | 8 | Order lines edited after download | `mess.edit_order_lines` | 3% of lines, quantity ±10 to 30% | Latest `updated_at` per `order_line_id` |
-| 9 | Micro-stops under 30 seconds are not logged | `timeline.lay_out` | Run wall time plus stops is about 200 of 480 minutes per shift | Nothing to fix; `scheduled − runs − stops` is "unaccounted" and worth a Gold column |
+| 9 | Micro-stops under 30 seconds are not logged | `production._balance_shifts`, `timeline.lay_out` | About 45 to 55 unaccounted minutes per shift at Atlanta, PA, and LA; about 135 at Chicago (see below) | Nothing to fix; `scheduled − runs − stops` is "unaccounted" and worth a Gold column |
 | 10 | Roll width keyed by hand in one feed, read from the machine in another | `mess.disagree_roll_width` | 1% of lines, ±5 inches | Machine value wins; count the disagreements |
 
 ## Planted facts
@@ -165,12 +165,12 @@ How the targets are hit: the generator draws plausible values first and then cal
 | --- | --- |
 | PF-01 | 46 missplices, mean 7.0 minutes, 12 in Dec to Feb; the largest three-month window on any machine |
 | PF-02 | 1,840 stacker jams, 18,400.0 minutes; largest unplanned cause at Chicago by count and minutes |
-| PF-03 | PA-C1 95.8%; ATL-C1 93.6, ATL-C2 94.3, CHI-C1 86.9, LA-C1 90.8 |
-| PF-04 | 6.21% and 1.74% (roughly 1,100 tests per quarter, so one failure is 0.09 points) |
-| PF-05 | 9.50% and 2.09% |
+| PF-03 | PA-C1 95.8%; ATL-C1 93.6, ATL-C2 94.3, CHI-C1 86.9, LA-C1 86.0 |
+| PF-04 | 6.20% and 1.80% (several hundred tests per quarter, so one failure is about 0.1 points) |
+| PF-05 | 9.5% and 2.1% |
 | PF-06 | 4.8% and 3.1%; other plants' shift gaps are 0.5 to 0.7 points |
 | PF-07 | 38,500, 31,000, 14,600, 9,200 exactly |
-| PF-08 | 11.4 and 3.2 |
+| PF-08 | Chicago 16.0, LA 10.0, PA 9.0, Atlanta 7.5 |
 | PF-09 | 2.7 and 0.9 |
 | PF-10 | 41.0% |
 | PF-11 | 410.0 and 780.0 |
@@ -186,7 +186,8 @@ How the targets are hit: the generator draws plausible values first and then cal
 
 ## Simplifications and where the data departs from the spec
 
-- **Throughput per shift is lower than the spec's "typical performance".** Section 3 says 200,000 to 400,000 lineal feet per shift on a 110" machine. PF-07 and PF-08 together fix Atlanta at 3.2 wet-end runs × 38,500 feet ≈ 123,000 feet per machine-shift and Chicago at about 105,000. The planted facts win because they are exact targets; the result is that runs plus logged stops fill about 200 of 480 minutes and the rest is unaccounted time (item 9, much larger than micro-stops alone would explain). The owner may want to revise either PF-08 or the typical-performance paragraph.
+- **Feet per shift follow the spec's typical-performance paragraph.** PF-08 was revised (issue #15 review) to Atlanta 7.5, Chicago 16, PA 9, and LA 10 wet-end changes per machine-shift, so the plants run about 282,000 and 295,000 (ATL-C1, ATL-C2), 147,000 (CHI-C1), 279,000 (PA-C1), and 146,000 (LA-C1) lineal feet per shift. Feet are spread across shifts so each shift's running time tracks the time available (scheduled × uptime − 50 minutes), which leaves 45 to 55 unaccounted minutes per shift at Atlanta, PA, and LA. **Chicago keeps about 135 unaccounted minutes** because PF-11 pins its derived speeds (780 and 410 fpm) while PF-07 and PF-08 pin its feet; 16 setups of 9,200 feet take under 300 minutes at those speeds. Those minutes sit between setups and are the unlogged part of a change-over. About one shift in eight exceeds 480 minutes because PM, knife change, or a long stop landed in it; the next shift starts late and absorbs it.
+- **Derived speed is well below nominal** outside the pinned Chicago grades: Atlanta runs about 700 fpm, PA about 680, LA about 450 while ramping. Derived speed is lineal feet over running time, so it carries slow running and unlogged micro-stops; the pinned 780 fpm on CHI-C1 32 ECT C is the one place the spec says what the gap to nominal looks like.
 - **Dry-end runs inside a setup are laid out one after another**, alternating knives, and the setup's lineal feet is their sum, as the spec's section 5 says. On a real corrugator the two knives cut the same web side by side; a side-by-side model would halve the feet and break PF-07's definition.
 - **Runs do not cross shift boundaries.** The first setup of a shift always differs in grade or width from the last setup of the previous shift.
 - **Wet-end change stops are not one per setup.** A splice-through grade change does not stop the machine; the planned "Order change, grade change" stop happens on a share of hard transitions (into or out of double wall and E flute), most often at Chicago. Otherwise Chicago's 11.4 changes per shift would cost more downtime than its uptime allows.
