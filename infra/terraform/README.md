@@ -71,6 +71,23 @@ A plan refreshes every resource in the root, including IAM bindings. Refreshing 
 
 `terraform destroy` removes the pool and provider, but Google keeps a deleted pool's ID reserved for 30 days. A rebuild inside that window must either undelete the pool (`gcloud iam workload-identity-pools undelete github-actions --location=global`) before `make apply`, or use a different `pool_id`. Everything else in dev comes back as it was.
 
+## Running Terraform in a Claude Code session
+
+`registry.terraform.io` is not reachable from a session, but `releases.hashicorp.com` is. Install the pinned binary and the provider into the scratchpad and point Terraform at a filesystem mirror:
+
+```bash
+TF=/path/to/scratchpad/tf
+mkdir -p $TF/mirror/registry.terraform.io/hashicorp/google && cd $TF
+curl -sSfO https://releases.hashicorp.com/terraform/1.17.1/terraform_1.17.1_linux_amd64.zip
+unzip -oq terraform_1.17.1_linux_amd64.zip
+cd mirror/registry.terraform.io/hashicorp/google
+curl -sSfO https://releases.hashicorp.com/terraform-provider-google/8.9.0/terraform-provider-google_8.9.0_linux_amd64.zip
+printf 'provider_installation {\n  filesystem_mirror { path = "%s/mirror"  include = ["registry.terraform.io/hashicorp/*"] }\n  direct { exclude = ["registry.terraform.io/hashicorp/*"] }\n}\n' "$TF" > $TF/cli.tfrc
+cd /path/to/repo && TF_CLI_CONFIG_FILE=$TF/cli.tfrc make terraform-check TF=$TF/terraform
+```
+
+The provider version is the one in `envs/dev/.terraform.lock.hcl`; bump both together. The same `TF=` and `TF_CLI_CONFIG_FILE` work for `make plan`.
+
 ## Known limitation: object names with slashes from a session
 
 The session's egress proxy decodes `%2F` in request paths, so a GCS JSON API call that names an object under a "folder" (`gs://bucket/a/b`) returns 404 from the sandbox even though the object exists. Listing works, uploads work, and BigQuery loads from GCS are server-side and unaffected. Reads and deletes by name from the sandbox work only through the XML API (`https://storage.googleapis.com/<bucket>/<object>`), whose paths carry literal slashes. This is why the state backend has no `prefix`: `default.tfstate` sits at the bucket root. Report it to the environment owner rather than working around it in code.

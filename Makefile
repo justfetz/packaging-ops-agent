@@ -1,6 +1,6 @@
 # Common entry points. CLAUDE.md documents when to use each one.
 .DEFAULT_GOAL := help
-.PHONY: help install lint format test check run terraform-check bootstrap plan show-plan apply
+.PHONY: help install lint format test check run terraform-check bootstrap plan show-plan apply generate check-facts upload
 
 # Terraform roots live under infra/terraform/envs/<ENV>. ENV is dev or prod.
 ENV ?= dev
@@ -8,6 +8,11 @@ TF ?= terraform
 TF_DIR := infra/terraform
 TF_ROOT := $(TF_DIR)/envs/$(ENV)
 TF_INIT := $(TF) -chdir=$(TF_ROOT) init -input=false -backend-config=backend.tfvars
+# Synthetic data. SEED and RAW_DIR feed `make generate`; the landing bucket is
+# ${project_id}-landing, read from the Terraform root for ENV.
+SEED ?= 42
+RAW_DIR ?= data/raw
+
 # Extra arguments for `make plan`. CI passes "-lock=false -out=plan.tfplan":
 # its identity can only read state, and the saved plan feeds `make show-plan`.
 PLAN_FLAGS ?=
@@ -50,6 +55,20 @@ check: lint test terraform-check ## Everything CI runs
 
 run: ## Serve the app locally on http://127.0.0.1:8080
 	uv run uvicorn app.main:app --reload --port 8080
+
+generate: ## Write the synthetic raw feeds to RAW_DIR with SEED (deterministic)
+	uv run python -m data.generator generate --seed $(SEED) --out $(RAW_DIR)
+
+check-facts: ## Recompute every planted fact from RAW_DIR and compare to data/planted_facts.yaml
+	uv run python -m data.generator check --out $(RAW_DIR)
+
+upload: ## Copy RAW_DIR to the ENV landing bucket (flat layout, only changed files)
+	@project=$$(sed -n 's/^project_id *= *"\(.*\)"/\1/p' $(TF_ROOT)/terraform.tfvars); \
+	bucket="gs://$$project-landing"; \
+	test -f $(RAW_DIR)/manifest.json || { echo "no manifest in $(RAW_DIR); run make generate first"; exit 1; }; \
+	echo "uploading $(RAW_DIR) to $$bucket"; \
+	gcloud storage rsync $(RAW_DIR) "$$bucket" --project="$$project" --exclude='.*\.gitkeep$$'; \
+	gcloud storage ls "$$bucket" --project="$$project" | wc -l | xargs -I{} echo "{} objects in $$bucket"
 
 bootstrap: ## Create the Terraform state bucket for ENV once, with gcloud. Safe to rerun
 	@bucket=$$(sed -n 's/^bucket *= *"\(.*\)"/\1/p' $(TF_ROOT)/backend.tfvars); \

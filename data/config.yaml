@@ -1,0 +1,370 @@
+# Generator configuration. Every value here comes from docs/domain-spec.md;
+# change the spec and this file together. Planted-fact targets live in
+# data/planted_facts.yaml and are read by the generator as well as the tests.
+
+company:
+  name: Ironwood Container
+  period_start: 2024-11-01
+  period_end: 2026-10-31
+
+calendar:
+  # Three shifts, Monday through Friday. Saturday first shift is overtime in
+  # the Q4 peak at Atlanta and Pennsylvania. Weekend maintenance happens
+  # outside scheduled time and is not logged as a stop event.
+  shifts:
+    - { shift_no: 1, start: "06:00", minutes: 480 }
+    - { shift_no: 2, start: "14:00", minutes: 480 }
+    - { shift_no: 3, start: "22:00", minutes: 480 }
+  overtime_saturdays:
+    plants: [ATL, PA]
+    months: [10, 11]
+    probability: 0.5
+  holidays:
+    - 2024-11-28
+    - 2024-11-29
+    - 2024-12-24
+    - 2024-12-25
+    - 2025-01-01
+    - 2025-05-26
+    - 2025-07-04
+    - 2025-09-01
+    - 2025-11-27
+    - 2025-11-28
+    - 2025-12-24
+    - 2025-12-25
+    - 2026-01-01
+    - 2026-05-25
+    - 2026-07-03
+    - 2026-09-07
+
+plants:
+  - code: ATL
+    name: Atlanta
+    city: Atlanta
+    state: GA
+    timezone: America/New_York
+    commissioned_year: 2002
+    data_start: 2024-11-01
+    market: High-volume brown box, long sheet runs, one anchor customer on a partnership agreement
+    character: The star. Oldest equipment, best numbers. High labor turnover shows up as higher setup time and waste on third shift
+    wet_end_runs_per_shift: 3.2        # PF-08
+    wet_end_run_length_ft: 38500       # PF-07
+    width_resets_per_shift: 1.1
+    orders_per_wet_end_run: 2.2
+    waste_pct_by_shift: { 1: 3.1, 2: 3.6, 3: 4.8 }   # PF-06 pins shifts 1 and 3
+    order_change_stop_fraction: 0.10
+  - code: CHI
+    name: Chicago
+    city: Chicago
+    state: IL
+    timezone: America/Chicago
+    commissioned_year: 2009
+    data_start: 2024-11-01
+    market: Specialty - E flute, double wall, preprinted liner, short runs, customers close by
+    character: The problem child. Many short wet-end runs and hard transitions in and out of specialty grades. Board stored on trailers in winter, moisture problems
+    wet_end_runs_per_shift: 11.4       # PF-08
+    wet_end_run_length_ft: 9200        # PF-07
+    width_resets_per_shift: 2.7        # PF-09
+    orders_per_wet_end_run: 1.4
+    waste_pct_by_shift: { 1: 5.2, 2: 5.4, 3: 5.9 }
+    order_change_stop_fraction: 0.22
+  - code: PA
+    name: Pennsylvania
+    city: Carlisle
+    state: PA
+    timezone: America/New_York
+    commissioned_year: 2014
+    data_start: 2024-11-01
+    market: Volume for the I-95 and I-81 corridor, long runs, distribution-center customers
+    character: Steady. Good equipment, mid-range on everything. The control plant
+    wet_end_runs_per_shift: 5.2
+    wet_end_run_length_ft: 31000       # PF-07
+    width_resets_per_shift: 0.9        # PF-09
+    orders_per_wet_end_run: 2.0
+    waste_pct_by_shift: { 1: 3.3, 2: 3.4, 3: 3.8 }
+    order_change_stop_fraction: 0.08
+  - code: LA
+    name: Los Angeles
+    city: Ontario
+    state: CA
+    timezone: America/Los_Angeles
+    commissioned_year: 2025
+    data_start: 2025-07-01
+    market: Specialty produce packaging - fruit and vegetable sheets, moisture-resistant grades, one dominant customer
+    character: Newest. Still ramping, so early months are noisy
+    wet_end_runs_per_shift: 4.6
+    wet_end_run_length_ft: 14600       # PF-07
+    width_resets_per_shift: 1.0
+    orders_per_wet_end_run: 1.6
+    waste_pct_by_shift: { 1: 5.0, 2: 5.2, 3: 5.6 }
+    order_change_stop_fraction: 0.12
+
+machines:
+  - code: ATL-C1
+    plant: ATL
+    width_in: 110
+    commissioned_year: 2002
+    nominal_speed_fpm: 800
+    capability: "Single and double wall: B, C, BC"
+    weak_spot: Splicer on roll stand 2 misses intermittently, more in humid months. Short stops and a web break every few weeks
+    roll_widths_in: [110, 105, 100, 95, 90]
+    uptime_pct: 93.6
+    grade_mix: { 32ECT-C: 0.36, 29ECT-C: 0.10, 40ECT-C: 0.12, 44ECT-C: 0.22, 200C: 0.07, 51ECT-BC: 0.09, 48ECT-BC: 0.04 }
+    speed_factor: 0.96
+  - code: ATL-C2
+    plant: ATL
+    width_in: 98
+    commissioned_year: 2006
+    nominal_speed_fpm: 800
+    capability: "Single wall: B and C"
+    weak_spot: Cutoff knife 2 does not hold accuracy below 21 inch cutoff. Short-blank orders go to C1 or run with higher waste
+    roll_widths_in: [98, 93, 88, 83, 78]
+    uptime_pct: 94.3
+    grade_mix: { 32ECT-C: 0.48, 29ECT-C: 0.16, 40ECT-C: 0.12, 44ECT-C: 0.19, 200C: 0.05 }
+    speed_factor: 0.94
+    short_cutoff_fraction: 0.06      # PF-16: runs with cutoff under 21 inches
+  - code: CHI-C1
+    plant: CHI
+    width_in: 98
+    commissioned_year: 2009
+    nominal_speed_fpm: 900
+    capability: "E, B, C, BC, EB; preprinted liner"
+    weak_spot: Lower stacker jams on short sheets and E flute. Frequent short stops, the plant's biggest downtime cause
+    roll_widths_in: [98, 93, 88, 83, 78]
+    uptime_pct: 86.9
+    grade_mix: { 26ECT-B: 0.12, 32ECT-B: 0.20, 32ECT-E: 0.15, 48ECT-BC: 0.14, 51ECT-BC: 0.12, 71ECT-BC: 0.06, 32ECT-C: 0.11, 29ECT-C: 0.05, 44ECT-C: 0.05 }
+    speed_factor: 0.92
+  - code: PA-C1
+    plant: PA
+    width_in: 110
+    commissioned_year: 2014
+    nominal_speed_fpm: 1000
+    capability: Single and double wall
+    weak_spot: None chronic. The control machine
+    roll_widths_in: [110, 105, 100, 95, 90]
+    uptime_pct: 95.8                  # PF-03, the only machine above 95
+    grade_mix: { 32ECT-C: 0.40, 29ECT-C: 0.12, 40ECT-C: 0.12, 44ECT-C: 0.20, 275C: 0.06, 48ECT-BC: 0.10 }
+    speed_factor: 0.95
+  - code: LA-C1
+    plant: LA
+    width_in: 98
+    commissioned_year: 2025
+    nominal_speed_fpm: 1000
+    capability: "B, C, BC; food-grade and moisture-resistant liners"
+    weak_spot: Slitter-scorer score alignment drifts, causing score-line quality rejects. Ramp-up noise through 2025
+    roll_widths_in: [98, 93, 88, 83, 78]
+    uptime_pct: 90.8
+    grade_mix: { 32ECT-C: 0.30, 44ECT-C-MR: 0.45, 44ECT-C: 0.10, 40ECT-C: 0.05, 48ECT-BC: 0.10 }
+    speed_factor: 0.85
+
+# Recipes are liner/medium/liner basis weights in pounds. speed_factor scales
+# the machine nominal speed; starch_lb_per_msf is the companywide typical value.
+grades:
+  - { code: 26ECT-B, flute: B, recipe: 26/23/26, test_basis: ECT, test_target: 26, caliper_in: 0.125, speed_factor: 0.92, price_per_msf: 17.5, cost_per_msf: 14.4, starch_lb_per_msf: 2.4, runs_mainly_at: Chicago, notes: Light e-commerce mailers }
+  - { code: 29ECT-C, flute: C, recipe: 33/23/33, test_basis: ECT, test_target: 29, caliper_in: 0.172, speed_factor: 0.95, price_per_msf: 18.5, cost_per_msf: 15.3, starch_lb_per_msf: 2.6, runs_mainly_at: "ATL, PA", notes: Light RSC }
+  - { code: 32ECT-C, flute: C, recipe: 35/26/35, test_basis: ECT, test_target: 32, caliper_in: 0.175, speed_factor: 0.96, price_per_msf: 20.0, cost_per_msf: 16.6, starch_lb_per_msf: 2.7, runs_mainly_at: "ATL, PA, LA", notes: "The volume grade, about 40% of all lineal feet" }
+  - { code: 32ECT-B, flute: B, recipe: 35/26/35, test_basis: ECT, test_target: 32, caliper_in: 0.128, speed_factor: 0.90, price_per_msf: 21.5, cost_per_msf: 17.6, starch_lb_per_msf: 2.6, runs_mainly_at: Chicago, notes: "Print surface, retail" }
+  - { code: 40ECT-C, flute: C, recipe: 42/26/42, test_basis: ECT, test_target: 40, caliper_in: 0.178, speed_factor: 0.93, price_per_msf: 24.0, cost_per_msf: 19.9, starch_lb_per_msf: 2.8, runs_mainly_at: "ATL, PA", notes: Heavier shipping }
+  - { code: 44ECT-C, flute: C, recipe: 42/30/42, test_basis: ECT, test_target: 44, caliper_in: 0.180, speed_factor: 0.92, price_per_msf: 27.5, cost_per_msf: 22.6, starch_lb_per_msf: 2.9, runs_mainly_at: "ATL, PA", notes: "Second volume grade: furniture, appliances" }
+  - { code: 44ECT-C-MR, flute: C, recipe: 42/30/42 wet-strength liner, test_basis: ECT, test_target: 44, caliper_in: 0.180, speed_factor: 0.85, price_per_msf: 46.0, cost_per_msf: 36.5, starch_lb_per_msf: 3.5, runs_mainly_at: LA, notes: "Moisture-resistant produce grade, higher starch, wax-alternative coating" }
+  - { code: 200C, flute: C, recipe: 42/26/42, test_basis: Mullen, test_target: 200, caliper_in: 0.178, speed_factor: 0.93, price_per_msf: 23.5, cost_per_msf: 19.6, starch_lb_per_msf: 2.8, runs_mainly_at: ATL, notes: Legacy Mullen customers }
+  - { code: 275C, flute: C, recipe: 69/33/69, test_basis: Mullen, test_target: 275, caliper_in: 0.185, speed_factor: 0.85, price_per_msf: 33.0, cost_per_msf: 27.2, starch_lb_per_msf: 3.0, runs_mainly_at: PA, notes: "Legacy heavy Mullen" }
+  - { code: 48ECT-BC, flute: BC, recipe: 42/26/26/26/42, test_basis: ECT, test_target: 48, caliper_in: 0.300, speed_factor: 0.70, price_per_msf: 37.0, cost_per_msf: 30.0, starch_lb_per_msf: 4.9, runs_mainly_at: "Chicago, PA", notes: Entry double wall }
+  - { code: 51ECT-BC, flute: BC, recipe: 42/26/33/26/42, test_basis: ECT, test_target: 51, caliper_in: 0.305, speed_factor: 0.64, price_per_msf: 41.0, cost_per_msf: 33.2, starch_lb_per_msf: 5.1, runs_mainly_at: "Chicago, ATL-C1", notes: "Cabinets, furniture. Harder to run" }
+  - { code: 71ECT-BC, flute: BC, recipe: 69/33/33/33/69, test_basis: ECT, test_target: 71, caliper_in: 0.320, speed_factor: 0.50, price_per_msf: 52.0, cost_per_msf: 42.0, starch_lb_per_msf: 5.6, runs_mainly_at: Chicago, notes: "Heaviest. Slow, high waste, few customers" }
+  - { code: 32ECT-E, flute: E, recipe: 35/26/35, test_basis: ECT, test_target: 32, caliper_in: 0.062, speed_factor: 0.62, price_per_msf: 26.0, cost_per_msf: 21.4, starch_lb_per_msf: 2.2, runs_mainly_at: Chicago, notes: "Small retail, often preprinted liner" }
+
+# Paper price increases: standard cost per MSF steps up for every grade on the
+# first of the month. Price follows with a lag unless the contract has no
+# escalator (the Atlanta anchor).
+cost_increases:
+  - { month: 2025-03, pct: 6.1 }     # PF-13
+  - { month: 2026-02, pct: 5.8 }
+price_lag_months: 2
+anchor_price_lag_months: 3            # Atlanta anchor moved in June 2025, not May
+
+# share is the customer's share of the home plant's dry-end runs. margin_pct is
+# the period margin the generator calibrates to; PF-19 pins the two extremes.
+customers:
+  - { id: C001, name: Southern Brands Converting, segment: Brand converting operation, home_plant: ATL, share: 0.40, contract: partnership, escalator: false, margin_pct: 9.8, lead_days: [2, 5] }   # Atlanta anchor, PF-13, PF-19
+  - { id: C002, name: Peachtree Box Company, segment: Independent box plant, home_plant: ATL, share: 0.16, contract: standard, escalator: true, margin_pct: 15.6, lead_days: [3, 8] }
+  - { id: C003, name: Chattahoochee Packaging, segment: Independent box plant, home_plant: ATL, share: 0.14, contract: standard, escalator: true, margin_pct: 16.9, lead_days: [3, 9] }
+  - { id: C004, name: Dixie Corrugated, segment: Independent box plant, home_plant: ATL, share: 0.12, contract: standard, escalator: true, margin_pct: 14.1, lead_days: [4, 10] }
+  - { id: C005, name: Riverline Fulfillment, segment: E-commerce packager, home_plant: ATL, share: 0.10, contract: standard, escalator: true, margin_pct: 17.3, lead_days: [3, 7] }
+  - { id: C006, name: Appalachian Appliance Packaging, segment: Distribution-center packaging, home_plant: ATL, share: 0.08, contract: standard, escalator: true, margin_pct: 13.5, lead_days: [4, 10] }
+  - { id: C007, name: Lakeshore Furniture Works, segment: Furniture and cabinet maker, home_plant: CHI, share: 0.09, contract: standard, escalator: true, margin_pct: 22.4, lead_days: [4, 9] }   # highest margin, PF-19
+  - { id: C008, name: Windy City Box, segment: Independent box plant, home_plant: CHI, share: 0.10, contract: standard, escalator: true, margin_pct: 15.2, lead_days: [3, 8] }
+  - { id: C009, name: Prairie Display and Packaging, segment: Independent box plant, home_plant: CHI, share: 0.09, contract: standard, escalator: true, margin_pct: 17.8, lead_days: [3, 9] }
+  - { id: C010, name: Calumet Cabinet Company, segment: Furniture and cabinet maker, home_plant: CHI, share: 0.09, contract: standard, escalator: true, margin_pct: 19.6, lead_days: [4, 10] }
+  - { id: C011, name: Northshore Mailers, segment: E-commerce packager, home_plant: CHI, share: 0.10, contract: standard, escalator: true, margin_pct: 14.7, lead_days: [3, 7] }
+  - { id: C012, name: Great Lakes Sheet Plant, segment: Independent box plant, home_plant: CHI, share: 0.09, contract: standard, escalator: true, margin_pct: 16.3, lead_days: [3, 9] }
+  - { id: C013, name: Des Plaines Packaging, segment: Independent box plant, home_plant: CHI, share: 0.09, contract: standard, escalator: true, margin_pct: 15.9, lead_days: [3, 9] }
+  - { id: C014, name: Fox Valley Containers, segment: Independent box plant, home_plant: CHI, share: 0.09, contract: standard, escalator: true, margin_pct: 18.4, lead_days: [4, 10] }
+  - { id: C015, name: Rockford Retail Displays, segment: Independent box plant, home_plant: CHI, share: 0.09, contract: standard, escalator: true, margin_pct: 17.1, lead_days: [3, 8] }
+  - { id: C016, name: Joliet Box and Carton, segment: Independent box plant, home_plant: CHI, share: 0.08, contract: standard, escalator: true, margin_pct: 16.6, lead_days: [3, 9] }
+  - { id: C017, name: Milwaukee Corrugated Supply, segment: Independent box plant, home_plant: CHI, share: 0.09, contract: standard, escalator: true, margin_pct: 15.4, lead_days: [4, 10] }
+  - { id: C018, name: Keystone Distribution Packaging, segment: Distribution-center packaging, home_plant: PA, share: 0.28, contract: standard, escalator: true, margin_pct: 13.9, lead_days: [3, 7] }
+  - { id: C019, name: Everline Commerce, segment: Brand converting operation, home_plant: PA, share: 0.22, contract: standard, escalator: true, margin_pct: 12.8, lead_days: [2, 6] }
+  - { id: C020, name: Susquehanna Box, segment: Independent box plant, home_plant: PA, share: 0.20, contract: standard, escalator: true, margin_pct: 16.0, lead_days: [3, 9] }
+  - { id: C021, name: Lehigh Valley Containers, segment: Independent box plant, home_plant: PA, share: 0.18, contract: standard, escalator: true, margin_pct: 17.5, lead_days: [4, 10] }
+  - { id: C022, name: Cumberland Sheet Plant, segment: Independent box plant, home_plant: PA, share: 0.12, contract: standard, escalator: true, margin_pct: 15.1, lead_days: [4, 10] }
+  - { id: C023, name: Valle Verde Produce Packers, segment: Produce packer, home_plant: LA, share: 0.61, contract: partnership, escalator: true, margin_pct: 18.2, lead_days: [2, 5] }   # LA anchor, PF-14
+  - { id: C024, name: Inland Empire Box, segment: Independent box plant, home_plant: LA, share: 0.21, contract: standard, escalator: true, margin_pct: 14.9, lead_days: [3, 9] }
+  - { id: C025, name: Pacific Grove Packaging, segment: Produce packer, home_plant: LA, share: 0.18, contract: standard, escalator: true, margin_pct: 16.8, lead_days: [3, 8] }
+
+# Downtime causes. category and planned follow the spec table; minutes are the
+# typical range; weights steer the random filler per machine (0 = never from
+# the filler). Causes the generator plants explicitly (missplice schedule,
+# Chicago stacker jams, boiler, power outage, PM, knife change) are listed
+# with planted: true and get no filler weight on those machines.
+downtime_causes:
+  - { code: Missplice, category: Operator, planned: false, minutes: [4, 12], section: wet end, planted: true }
+  - { code: Roll prep wrong, category: Operator, planned: false, minutes: [10, 20], section: wet end, weights: { ATL-C1: 0.14, ATL-C2: 0.14, CHI-C1: 0.05, PA-C1: 0.05, LA-C1: 0.08 }, third_shift_multiplier: { ATL: 2.5 } }
+  - { code: Paper or raw material problem, category: Operator, planned: false, minutes: [10, 30], section: wet end, weights: { ATL-C1: 0.08, ATL-C2: 0.08, CHI-C1: 0.18, PA-C1: 0.10, LA-C1: 0.22 } }
+  - { code: "Order change, grade change", category: Operator, planned: true, minutes: [3, 8], section: wet end, planted: true }
+  - { code: Web break, category: Maintenance, planned: false, minutes: [15, 45], section: bridge, weights: { ATL-C1: 0.22, ATL-C2: 0.10, CHI-C1: 0.16, PA-C1: 0.12, LA-C1: 0.10 }, winter_multiplier: { CHI: 2.2 } }
+  - { code: "Slitter blade wobble, score drift", category: Maintenance, planned: false, minutes: [10, 30], section: slitter-scorer, weights: { ATL-C1: 0.05, ATL-C2: 0.05, CHI-C1: 0.06, PA-C1: 0.08, LA-C1: 0.30 } }
+  - { code: Air pressure loss, category: Maintenance, planned: false, minutes: [10, 40], section: double backer, weights: { ATL-C1: 0.06, ATL-C2: 0.22, CHI-C1: 0.05, PA-C1: 0.08, LA-C1: 0.06 } }
+  - { code: Boiler or steam issue, category: Maintenance, planned: false, minutes: [30, 180], section: double backer, planted: true }
+  - { code: Stacker jam, category: Maintenance, planned: false, minutes: [5, 15], section: stacker, planted: true, weights: { ATL-C1: 0.08, ATL-C2: 0.08, CHI-C1: 0.0, PA-C1: 0.10, LA-C1: 0.06 } }
+  - { code: Discharge or conveyor fault, category: Maintenance, planned: false, minutes: [10, 30], section: conveyor, weights: { ATL-C1: 0.08, ATL-C2: 0.08, CHI-C1: 0.20, PA-C1: 0.27, LA-C1: 0.08 } }
+  - { code: Knife change, category: Maintenance, planned: true, minutes: [20, 40], section: knife, planted: true }
+  - { code: Preventive maintenance, category: Management, planned: true, minutes: [60, 120], section: wet end, planted: true }
+  - { code: Power outage, category: Management, planned: false, minutes: [30, 200], section: null, planted: true }
+  - { code: "No orders, waiting on schedule", category: Management, planned: true, minutes: [30, 120], section: null, planted: true }
+  - { code: Waiting on forklift or paper delivery, category: Management, planned: false, minutes: [5, 15], section: wet end, weights: { ATL-C1: 0.29, ATL-C2: 0.25, CHI-C1: 0.30, PA-C1: 0.20, LA-C1: 0.10 } }
+
+# How the planned-downtime share that is not PM or knife change is split
+# between machines (as order-change and no-orders stops). PF-17 fixes the
+# companywide planned share.
+planned_flex_weights: { ATL-C1: 0.04, ATL-C2: 0.04, CHI-C1: 0.70, PA-C1: 0.04, LA-C1: 0.18 }
+
+# Missplice events per machine per month. ATL-C1 is scheduled explicitly so
+# that June-August 2025 is the largest three-month window (PF-01).
+missplice_per_month:
+  default: { ATL-C1: 6, ATL-C2: 3, CHI-C1: 4, PA-C1: 2, LA-C1: 3 }
+  ATL-C1:
+    2025-06: 15
+    2025-07: 16
+    2025-08: 15
+    2025-12: 4
+    2026-01: 4
+    2026-02: 4
+    2026-06: 12
+    2026-07: 12
+    2026-08: 11
+
+# Boiler failures hit both Atlanta machines at once. The 212-minute one on
+# 14 January 2026 is PF-18. Power outages are Atlanta summer storms.
+boiler_events:
+  - { date: 2026-01-14, shift_no: 1, start: "09:15", minutes: 212 }
+  - { date: 2025-02-11, shift_no: 2, start: "16:40", minutes: 95 }
+  - { date: 2025-08-19, shift_no: 3, start: "02:10", minutes: 64 }
+  - { date: 2026-06-03, shift_no: 1, start: "07:30", minutes: 140 }
+power_outages:
+  - { date: 2025-06-24, shift_no: 2, start: "17:05", minutes: 85 }
+  - { date: 2025-07-15, shift_no: 2, start: "15:50", minutes: 150 }
+  - { date: 2025-08-06, shift_no: 3, start: "23:20", minutes: 45 }
+  - { date: 2026-06-30, shift_no: 2, start: "16:15", minutes: 110 }
+  - { date: 2026-08-11, shift_no: 1, start: "13:05", minutes: 70 }
+
+# Machine fault codes raised by the control system. Each implies a cause.
+fault_codes:
+  - { code: F-WE-012, section: wet end, description: "Splicer miss, roll stand 2", cause: Missplice }
+  - { code: F-WE-013, section: wet end, description: "Splicer miss, roll stand 1", cause: Missplice }
+  - { code: F-WE-031, section: wet end, description: Roll stand tension fault, cause: Paper or raw material problem }
+  - { code: F-BR-004, section: bridge, description: "Web break, bridge", cause: Web break }
+  - { code: F-SF-009, section: wet end, description: "Web break, single facer", cause: Web break }
+  - { code: F-SS-021, section: slitter-scorer, description: Slitter blade wobble, cause: "Slitter blade wobble, score drift" }
+  - { code: F-SS-022, section: slitter-scorer, description: Score alignment drift, cause: "Slitter blade wobble, score drift" }
+  - { code: F-DB-007, section: double backer, description: Low plant air pressure, cause: Air pressure loss }
+  - { code: F-DB-015, section: double backer, description: Hot plate steam pressure low, cause: Boiler or steam issue }
+  - { code: F-ST-002, section: stacker, description: Lower stacker jam, cause: Stacker jam }
+  - { code: F-ST-003, section: stacker, description: Upper stacker jam, cause: Stacker jam }
+  - { code: F-CV-005, section: conveyor, description: Discharge conveyor fault, cause: Discharge or conveyor fault }
+  - { code: F-CV-006, section: discharge, description: Discharge photo-eye blocked, cause: Discharge or conveyor fault }
+  - { code: F-KN-001, section: knife, description: Knife blade change required, cause: Knife change }
+  - { code: F-PW-000, section: null, description: Main power loss, cause: Power outage }
+
+# Deliberate messiness. Each item is numbered as in docs/domain-spec.md
+# section 11 and documented in data/README.md. Rates are fractions.
+messiness:
+  cause_spellings:            # item 1: variants by canonical cause
+    Missplice: [missplice, Mis-splice, splice miss, SPLICE, Misplice]
+    Web break: [web break, Web Break, WEB BRK, webbreak]
+    Stacker jam: [stacker jam, Stacker Jam, jam - stacker, STACKER, lower stacker jam]
+    Roll prep wrong: [roll prep, Roll Prep Wrong, bad roll prep]
+    Paper or raw material problem: [paper problem, Paper, bad paper, raw material]
+    Order change, grade change: [order change, Grade change, grade chg, ORDER CHG]
+    Slitter blade wobble, score drift: [slitter wobble, score drift, Slitter, blade wobble]
+    Air pressure loss: [air pressure, low air, Air Loss]
+    Boiler or steam issue: [boiler, steam, Boiler]
+    Discharge or conveyor fault: [conveyor, discharge fault, Conveyor Fault]
+    Knife change: [knife change, Knife Chg, blade change]
+    Preventive maintenance: [PM, preventive maint, Preventive Maintenance]
+    Power outage: [power outage, Power Out, outage]
+    No orders, waiting on schedule: [no orders, waiting on schedule, No Orders, idle - no sched]
+    Waiting on forklift or paper delivery: [waiting on forklift, waiting on paper, Forklift, fork wait]
+  variant_rate_by_plant: { ATL: 0.15, CHI: 0.45, PA: 0.08, LA: 0.20 }
+  other_rate: 0.08            # item 2: cause "Other" with a comment naming the cause
+  other_comment_keywords:     # a comment on an "Other" event contains exactly one of these
+    Missplice: [splice]
+    Roll prep wrong: [roll prep]
+    Paper or raw material problem: [paper]
+    Order change, grade change: [grade change, grade chg]
+    Web break: [web]
+    Slitter blade wobble, score drift: [slitter]
+    Air pressure loss: [air]
+    Boiler or steam issue: [boiler]
+    Stacker jam: [jam]
+    Discharge or conveyor fault: [conveyor]
+    Knife change: [knife]
+    Preventive maintenance: [preventive]
+    Power outage: [power]
+    No orders, waiting on schedule: [no orders]
+    Waiting on forklift or paper delivery: [forklift]
+  fault_code_rate: 0.85       # item 3: Maintenance stops that carry a fault code
+  fault_only_rate: 0.15       # item 3: of those, the share with no operator cause
+  shift_summary_resend_rate: 0.04      # item 4: 3 to 5% re-sent, exact or near duplicate
+  shift_summary_near_dup_share: 0.5    # item 4: share of re-sends with a corrected value
+  quality_retest_rate: 0.04            # item 5: tests with an earlier record, latest wins
+  la_starch_kg_until: 2025-10-01       # item 6: LA starch in kilograms before this date
+  clock_reset_runs: 14                 # item 7: run records with end before start (ATL, PA)
+  order_line_edit_rate: 0.03           # item 8: lines with a second record, new quantity
+  roll_width_disagree_rate: 0.01       # item 10: planner-keyed width differs from machine
+
+quality:
+  # failure rates by test type, in percent. Calibrated groups are exact.
+  base_fail_pct: { ECT: 1.5, Mullen: 2.0, moisture: 2.0, caliper: 1.2, pin_adhesion: 1.0, warp: 2.5, score: 1.2, ring_crush: 2.5 }
+  chicago_moisture_by_month:    # PF-05: Dec 2025 to Feb 2026 is 9.5, Jun to Aug 2025 is 2.1
+    default: 3.6
+    winter: 9.5
+    summer: 2.1
+    winter_2024: 8.8
+    summer_2026: 2.3
+  la_score_by_quarter:          # PF-04: Q3 2025 6.2, Q3 2026 1.8
+    2025Q3: 6.2
+    2025Q4: 5.0
+    2026Q1: 3.8
+    2026Q2: 2.6
+    2026Q3: 1.8
+    2026Q4: 1.6
+  atlanta_pin_adhesion:         # PF-20: Jun to Aug 2025 5.6, rest of 2025 1.4
+    summer_2025: 5.6
+    rest_2025: 1.4
+    summer_2026: 4.9
+    other: 1.3
+  chicago_warp_winter_pct: 6.0
+  starch_mr_lb_per_msf_by_quarter:   # PF-15, LA 44ECT-C-MR
+    2025Q3: 3.9
+    2025Q4: 3.7
+    2026Q1: 3.5
+    2026Q2: 3.3
+    2026Q3: 3.1
+    2026Q4: 3.0
+
+otif:
+  # On time in full, percent, by plant. PF-12 pins CHI, PA, and companywide.
+  plant_pct: { ATL: 92.9, CHI: 84.6, PA: 96.1, LA: 88.6 }
+  companywide_pct: 91.3
+  late_share_of_misses: 0.6      # of OTIF misses, the share that are late rather than short
