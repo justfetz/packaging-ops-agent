@@ -54,7 +54,7 @@ make check     # lint + test + terraform-check, the same as CI
 make run       # uvicorn on http://127.0.0.1:8080
 
 make generate            # synthetic raw feeds to data/raw, seed 42, about 20 s. SEED= and RAW_DIR= override
-make check-facts         # recompute the 20 planted facts from data/raw against data/planted_facts.yaml
+make check-facts         # recompute the 21 planted facts from data/raw against data/planted_facts.yaml
 make upload ENV=dev      # gcloud storage rsync data/raw to the ENV landing bucket, flat layout
 
 make bootstrap ENV=dev   # once per environment: create the Terraform state bucket with gcloud

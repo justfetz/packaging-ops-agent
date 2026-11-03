@@ -237,3 +237,15 @@
   tolerance:
     summer_2025_pct: 0.1
     rest_of_2025_pct: 0.1
+
+- id: PF-21
+  fact: Chicago loses about 135 minutes per machine-shift to wet-end changes; Atlanta about 45.
+  tables: [wet-end runs]
+  definition: Wet-end change time is setup_minutes on production runs, carried by the first run of each wet_end_setup_id (0 on the runs that follow inside the setup). Minutes per machine-shift = sum of setup_minutes / count of machine-shifts (distinct machine, shift_date, shift_no from deduplicated shift summaries), per plant. Chicago is the highest plant. The value is what the other facts leave, not a free target. Scheduled minutes less the stops the uptime allows (PF-03) less the running time the feet (PF-07, PF-08) take at the derived speeds (PF-11) is wet-end change time, and the generator hands that time to the changes up to the target here, so the tolerance is wider than usual.
+  expected:
+    CHI: 135.0
+    ATL: 45.0
+    chi_highest: true
+  tolerance:
+    CHI: 0.5
+    ATL: 0.5

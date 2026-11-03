@@ -189,6 +189,7 @@ def measure_facts(cfg: Config, out_dir: Path) -> dict[str, dict[str, Any]]:
     out["PF-18"] = _pf18(events)
     out["PF-19"] = _pf19(lines)
     out["PF-20"] = _pf20(tests)
+    out["PF-21"] = _pf21(runs, summaries, plant_of)
     return out
 
 
@@ -506,6 +507,24 @@ def _pf20(tests: Rows) -> dict[str, Any]:
     summer = [t for t in atl if is_summer(_ts(t["sampled_at"]).date())]
     rest = [t for t in atl if not is_summer(_ts(t["sampled_at"]).date())]
     return {"summer_2025_pct": _fail_rate(summer), "rest_of_2025_pct": _fail_rate(rest)}
+
+
+def _pf21(runs: Rows, summaries: Rows, plant_of: dict[str, str]) -> dict[str, Any]:
+    minutes: dict[str, float] = defaultdict(float)
+    changes: dict[str, int] = defaultdict(int)
+    for r in runs:
+        minutes[r["plant_code"]] += float(r["setup_minutes"])
+        if r["new_wet_end_setup"] == "true":
+            changes[r["plant_code"]] += 1
+    shifts = _machine_shifts(summaries, plant_of)
+    per_shift = {p: round(minutes[p] / shifts[p], 3) for p in shifts}
+    return {
+        "CHI": per_shift["CHI"],
+        "ATL": per_shift["ATL"],
+        "chi_highest": max(per_shift, key=lambda p: per_shift[p]) == "CHI",
+        "per_shift": per_shift,
+        "per_change": {p: round(minutes[p] / changes[p], 3) for p in changes},
+    }
 
 
 __all__ = ["CauseNormaliser", "compare_facts", "measure_facts"]

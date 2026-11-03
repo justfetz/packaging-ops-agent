@@ -11,7 +11,8 @@ M1 turns the plan's "synthetic packaging dataset" into something BigQuery can ho
 | Issue | Task | Who |
 | --- | --- | --- |
 | [#14](https://github.com/justfetz/packaging-ops-agent/issues/14) | Domain spec: the fictional company, plants, machines, grades, customers, messiness, and twenty planted facts | Jason with Claude, merged in [#21](https://github.com/justfetz/packaging-ops-agent/pull/21) |
-| [#15](https://github.com/justfetz/packaging-ops-agent/issues/15) | Seeded generator writing raw CSV and JSON lines to the landing bucket, with the planted facts realised and tested | Claude (this entry) |
+| [#15](https://github.com/justfetz/packaging-ops-agent/issues/15) | Seeded generator writing raw CSV and JSON lines to the landing bucket, with the planted facts realised and tested | Claude, merged in [#22](https://github.com/justfetz/packaging-ops-agent/pull/22) |
+| [#24](https://github.com/justfetz/packaging-ops-agent/issues/24) | M1.1b: model wet-end change time explicitly in the raw run records and plant PF-21 | Claude (this entry) |
 | M1.2 to M1.4 | Bronze load, Silver rules and tests, Gold models and singular tests for the planted facts | Next |
 
 The spec came first on purpose. A generator written before the spec would have planted whatever was convenient; the spec forced the generator to hit numbers somebody chose for a reason.
@@ -47,11 +48,49 @@ The spec came first on purpose. A generator written before the spec would have p
 
 ### How it was tested
 
-`tests/test_generator.py` generates the full set once per session into a temp directory (about 20 seconds) and then: compares all 50 measures of the 20 facts against `planted_facts.yaml`; asserts the combined checksum for seed 42; checks size and row counts; checks each messiness item is present at its configured rate, including unaccounted minutes per shift under 60 at three plants; and regenerates once more to prove byte-identical output for the same seed. 33 tests, 42 seconds. `make check-facts` against `data/raw` prints the same comparison. The upload was verified with `gcloud storage ls` and by reading `manifest.json` back from the bucket.
+`tests/test_generator.py` generated the full set once per session into a temp directory (about 20 seconds) and then: compared all 50 measures of the 20 facts against `planted_facts.yaml`; asserts the combined checksum for seed 42; checks size and row counts; checks each messiness item is present at its configured rate, including unaccounted minutes per shift under 60 at three plants; and regenerates once more to prove byte-identical output for the same seed. 33 tests, 42 seconds. `make check-facts` against `data/raw` prints the same comparison. The upload was verified with `gcloud storage ls` and by reading `manifest.json` back from the bucket.
+
+## Issue #24: wet-end change time, M1.1b
+
+### Why
+
+The #15 review left every machine-shift with minutes that were neither running time nor a logged stop: Atlanta 46, PA 48, LA 54, Chicago 135. Divided by the wet-end changes per shift (7.5, 9, 10, 16) that is 5 to 8.4 minutes per change at every plant, which is what a splice or width change costs at crawl speed. Jason's call in #24: that is the expensive change the spec's section 5 describes, so model it and name it rather than minimise it. Chicago losing over two hours a shift to transitions is the Chicago story in one number.
+
+### What was built
+
+- `setup_minutes` on `raw__production_runs`: the wet-end change time of the setup, on its first run, 0 on the runs that follow. One decimal. The clock agrees with it: the first run starts that many minutes after whatever came before, less any logged stop in between. M1.4 rolls it into `fct_wet_end_runs`.
+- **PF-21**: Chicago loses about 135 minutes per machine-shift to wet-end changes, Atlanta about 45. In `planted_facts.yaml`, the spec's table, `facts.py`, and the test. 21 facts now.
+- Spec section 5 has a change-time paragraph: 5 to 10 minutes at crawl speed, neither a logged stop nor production at rate, longest for specialty transitions at Chicago.
+- The timeline gives each setup a floor of 1.5 to 3 minutes and then a weighted share of the shift's idle time (specialty transitions 1.6, width resets 1.25), scaled per plant to the target. What little is left sits at the end of the shift as unlogged micro-stops.
+- `tests/test_generator.py` replaces the under-60 and under-150 unaccounted-minutes test with two: the plant mean per change is between 5 and 10 minutes with Chicago highest and no change under the floor, and the shift reconciles to within a minute once change time is counted.
+
+### Decisions made while building
+
+- **PF-21 is derived, and the file says so.** Scheduled minutes less the stops the uptime allows (PF-03) less the running time the feet take at the derived speeds (PF-07, PF-08, PF-11) is change time. The generator can hand that time to the changes but cannot invent more, so the fact's tolerance is 0.5 minutes rather than 0.05 and the definition explains why. The issue said Atlanta 46; that was 45.5 rounded, and the floors in full shifts cost a few tenths, so the fact says 45 and the data gives 45.0. Chicago lands on 134.9 against 135.
+- **Downtime now comes before the feet.** The first cut gave every change a floor and the shift's leftover time, and a third of the changes at Atlanta, PA, and LA came out under 3 minutes while Chicago's were fine. The cause was ordering: feet were balanced across shifts before any stop existed, so a shift that then drew the weekly PM or a long breakdown had no idle time left and ran late. The generator now sizes every stop and gives it a shift first, balances each shift's feet to what it has left, and only then attaches stops to runs (`downtime.attach_stops`). Late shifts fell from 10 to 15% to 2 to 6% at every plant, the per-shift spread of idle time fell by two thirds, and the change-time distribution is unimodal: Chicago has nothing under 3 minutes and 71% between 5 and 10. No pinned fact moved.
+- **Allocation never exceeds a shift's idle time.** Rounding change time to tenths of a minute at plant level handed some shifts a few seconds more than they had. At Chicago, where changes take all the idle time, those seconds had nowhere to go and carried from shift to shift for good; 17% of Chicago shifts were running late before the per-shift cap went in. The plant total is now met by handing spare tenths only to shifts with room.
+- **The balancer's speed estimate matches the speed stage.** It lacked Atlanta's third-shift factor, which put 12 minutes of systematic error into every Atlanta night shift.
+
+### What broke
+
+- The first version of the overrun check counted a shift as late when its last run ended after the shift, and ignored the stops after the last run, so it reported three quarters of shifts late at every plant. Counting stops as activity gave the real numbers in the table below.
+- Placing the no-orders waits in light shifts, which seemed the obvious fix for LA's spread, did nothing, because at that point in the pipeline the unplanned filler did not exist yet and every shift looked equally light. Reordering the filler ahead of the flex did not help either; the per-shift variance was the filler itself. Both changes were backed out in favour of building all downtime before the feet.
+
+| Plant | Idle minutes per shift (mean, sd) before | after | Late shifts before | after |
+| --- | --- | --- | --- | --- |
+| Atlanta | 45.5, 37.5 | 45.5, 17.6 | 15% | 6% |
+| Chicago | 134.9, 40.5 | 134.9, 7.4 | 1% | 2% |
+| PA | 48.1, 33.3 | 47.9, 14.8 | 10% | 4% |
+| LA | 53.6, 43.9 | 53.6, 10.8 | 14% | 3% |
+
+### How it was tested
+
+All 21 facts hold under `make check-facts` and in `tests/test_generator.py`, which now has 35 tests. The seed-42 set is 130 files, 317,032 rows, 48.7 MB; the checksum is re-pinned. `make check` passes, and the set is re-uploaded to the dev landing bucket with `make upload ENV=dev`.
 
 ## What I would change
 
-- Chicago's 135 unaccounted minutes a shift are the one place the data still says "the generator" rather than "the plant". If a golden question ever asks about Chicago's utilisation, move PF-11 (lower pinned speeds) or let a wet-end run span shifts.
+- Chicago's 135 minutes a shift now say "the plant" rather than "the generator", and PF-21 names them. The number is still a consequence of PF-07, PF-08, and PF-11; if a golden question ever asks how long a Chicago change takes, the answer is 8.4 minutes, and only moving one of those facts changes it.
+- Shifts that run late are now 2 to 6%; the rest of the spread is unplanned stops drawn after the feet were set. Making a late shift shed feet instead would mean a wet-end run spanning shifts, which the spec rules out.
 - Stop events have no `run_id`; Silver joins by time. That is realistic and it is also the first place the dbt work will hurt. If it takes more than an afternoon, add the id to the feed and note it.
 - `facts.py` reads every file with the `csv` module in two seconds. Once dbt exists, the same checks should run against DuckDB so there is one implementation of each rule, not two.
 - The customer assignment is random within a plant. If the document corpus (M4) wants "the furniture maker buys 51 ECT BC", the generator needs a grade affinity per customer. Small change, do it when a golden question needs it.
@@ -61,7 +100,8 @@ The spec came first on purpose. A generator written before the spec would have p
 | Issue | Status |
 | --- | --- |
 | #14 Domain spec | Merged in [#21](https://github.com/justfetz/packaging-ops-agent/pull/21) |
-| #15 Generator | This PR. Raw set in the dev landing bucket, 20 facts hold, tests in CI |
+| #15 Generator | Merged in [#22](https://github.com/justfetz/packaging-ops-agent/pull/22). Raw set in the dev landing bucket, tests in CI |
+| #24 Wet-end change time | This PR. `setup_minutes` in the run feed, PF-21, 21 facts hold, set re-uploaded |
 | M1.2 Bronze | Not started |
 | M1.3 Silver | Not started. The rules are listed in `data/README.md` |
 | M1.4 Gold | Not started. The fact definitions are in `data/planted_facts.yaml` |

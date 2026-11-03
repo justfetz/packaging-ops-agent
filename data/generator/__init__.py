@@ -2,7 +2,9 @@
 
 `generate(seed, out_dir)` runs the whole pipeline and writes the raw feeds.
 Each stage gets its own `random.Random` seeded from the run seed and the stage
-name, so a change inside one stage does not reshuffle the others. Same seed,
+name, so a change inside one stage does not reshuffle the others. Downtime is
+sized and given a shift before the feet are spread, so a shift's production
+fits around its stops; the stops are attached to runs afterwards. Same seed,
 same bytes.
 """
 
@@ -14,9 +16,9 @@ from typing import Any
 
 from . import mess
 from .config import DEFAULT_CONFIG, DEFAULT_FACTS, load_config, load_facts
-from .downtime import build_downtime
+from .downtime import attach_stops, build_downtime, stop_seconds_by_shift
 from .orders import build_orders
-from .production import build_production
+from .production import build_runs, build_wet_end_runs
 from .quality import build_quality
 from .shifts import build_shifts
 from .timeline import lay_out
@@ -38,9 +40,12 @@ def generate(
         return random.Random(f"{seed}:{stage}")
 
     shifts = build_shifts(cfg, rng("shifts"))
-    wet_runs, runs = build_production(cfg, facts, shifts, rng("production"))
-    events = build_downtime(cfg, facts, shifts, wet_runs, runs, rng("downtime"))
-    summaries = lay_out(cfg, shifts, wet_runs, events, rng("timeline"))
+    production_rng, downtime_rng = rng("production"), rng("downtime")
+    wet_runs = build_wet_end_runs(cfg, facts, shifts, production_rng)
+    events = build_downtime(cfg, facts, shifts, wet_runs, downtime_rng)
+    runs = build_runs(cfg, facts, wet_runs, stop_seconds_by_shift(events), production_rng)
+    attach_stops(cfg, events, runs, downtime_rng)
+    summaries = lay_out(cfg, facts, shifts, wet_runs, events, rng("timeline"))
 
     runs.sort(key=lambda r: (r.run_start, r.machine_code, r.wet_end_setup_id, r.seq_in_setup))
     for n, r in enumerate(runs, start=1):

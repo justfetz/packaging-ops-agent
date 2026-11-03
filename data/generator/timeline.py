@@ -1,11 +1,19 @@
 """Give every run and stop event a clock time inside its shift.
 
 A shift is laid out in sequence: setups in order, each with its order-change
-stop (if any) and its dry-end runs; standalone stops (PM, knife change, no
-orders) are inserted between setups; unplanned stops happen inside the run
-they were assigned to and stretch it. Whatever time is left in the shift is
-spread as gaps between runs: unlogged micro-stops and slow running, which is
-why downtime seconds and lost production never reconcile (spec item 9).
+stop (if any), its wet-end change time at crawl speed, and its dry-end runs;
+standalone stops (PM, knife change, no orders) are inserted between setups;
+unplanned stops happen inside the run they were assigned to and stretch it.
+
+The time a shift has left after running time and logged stops is wet-end
+change time (spec section 5). Each setup gets a floor that every change
+needs plus a weighted share of the rest, with specialty transitions and
+width resets weighing more, and the shares are scaled per plant so the mean
+per machine-shift lands on the PF-21 target. The first run of the setup
+carries it as `setup_minutes`. A shift that is already full of stops gives
+its changes only their floors and runs late; the next shift starts late and
+absorbs it. What little is left over sits at the end of the shift as
+unlogged micro-stops (spec item 9).
 
 The planted Atlanta boiler and power events have a fixed clock time and are
 placed at exactly that time, inside whichever run is going at that moment.
@@ -17,8 +25,10 @@ import datetime as dt
 import random
 from collections import defaultdict
 
-from .config import Config
+from .calibrate import scale_to_sum
+from .config import Config, PlannedFact
 from .model import Run, Shift, ShiftSummary, StopEvent, WetEndRun
+from .production import SPECIALTY_FLUTES, change_minutes_per_shift
 
 FIRST_NAMES = [
     "Marcus",
@@ -82,6 +92,7 @@ LAST_NAMES = [
 
 def lay_out(
     cfg: Config,
+    facts: dict[str, PlannedFact],
     shifts: list[Shift],
     wet_runs: list[WetEndRun],
     events: list[StopEvent],
@@ -106,40 +117,49 @@ def lay_out(
             ev.placement = "standalone"
             standalone[ev.shift.key].append(ev)
 
+    ordered = sorted(shifts, key=lambda s: (s.start, s.machine_code))
+    content: dict[tuple, int] = {}
+    for shift in ordered:
+        setups = wet_by_shift.get(shift.key, [])
+        seconds = sum(r.run_seconds for w in setups for r in w.runs)
+        seconds += sum(
+            e.duration_seconds for w in setups for r in w.runs for e in in_run.get(id(r), [])
+        )
+        seconds += sum(e.duration_seconds for w in setups for e in before_setup.get(w.setup_id, []))
+        seconds += sum(e.duration_seconds for e in standalone.get(shift.key, []))
+        seconds += sum(e.duration_seconds for e in fixed.get(shift.key, []))
+        content[shift.key] = seconds
+    _assign_change_time(cfg, facts, ordered, wet_by_shift, content, rng)
+
     leads = _CrewLeads(cfg, rng)
     summaries: list[ShiftSummary] = []
     carry: dict[str, dt.datetime] = {}
-    for shift in sorted(shifts, key=lambda s: (s.start, s.machine_code)):
+    for shift in ordered:
         setups = wet_by_shift.get(shift.key, [])
         t = max(shift.start, carry.get(shift.machine_code, shift.start))
         pending_fixed = sorted(fixed.get(shift.key, []), key=lambda e: e.start_time)
         loose = standalone.get(shift.key, [])
         slots = _standalone_slots(loose, len(setups), rng)
+        budget = max(
+            0,
+            shift.scheduled_minutes * 60
+            - content[shift.key]
+            - int((t - shift.start).total_seconds()),
+        )
+        tail = max(0, budget - sum(w.setup_seconds for w in setups))
 
-        content = sum(r.run_seconds for w in setups for r in w.runs)
-        content += sum(
-            e.duration_seconds for w in setups for r in w.runs for e in in_run.get(id(r), [])
-        )
-        content += sum(e.duration_seconds for w in setups for e in before_setup.get(w.setup_id, []))
-        content += sum(e.duration_seconds for e in loose) + sum(
-            e.duration_seconds for e in pending_fixed
-        )
-        gap_budget = max(
-            0, shift.scheduled_minutes * 60 - content - int((t - shift.start).total_seconds())
-        )
-        gaps = _gaps(gap_budget, len(setups) + 1, rng)
-
-        t = _advance(t, gaps[0], pending_fixed)
         for i, w in enumerate(setups):
             for ev in slots.get(i, []):
                 t = _place_standalone(ev, t, pending_fixed)
             for ev in before_setup.get(w.setup_id, []):
                 t = _place_standalone(ev, t, pending_fixed)
+            t = _advance(t, w.setup_seconds, pending_fixed)
+            w.runs[0].setup_minutes = w.setup_seconds / 60
             for r in w.runs:
                 t = _place_run(r, t, in_run.get(id(r), []), pending_fixed, rng)
-            t = _advance(t, gaps[i + 1], pending_fixed)
         for ev in slots.get(len(setups), []):
             t = _place_standalone(ev, t, pending_fixed)
+        t = _advance(t, tail, pending_fixed)
         for ev in pending_fixed:  # nothing was running when it struck
             start = max(t, ev.start_time)
             ev.start_time, ev.end_time = start, start + dt.timedelta(seconds=ev.duration_seconds)
@@ -165,26 +185,97 @@ def _standalone_slots(
     return slots
 
 
-def _gaps(budget: int, slots: int, rng: random.Random) -> list[int]:
-    weights = [rng.uniform(0.2, 1.0) for _ in range(slots)]
-    if slots > 1:
-        weights[0] *= 0.5  # shifts start promptly
-    total = sum(weights)
-    gaps = [int(budget * w / total) for w in weights]
-    gaps[-1] += budget - sum(gaps)
-    return gaps
+def _assign_change_time(
+    cfg: Config,
+    facts: dict[str, PlannedFact],
+    ordered: list[Shift],
+    wet_by_shift: dict[tuple, list[WetEndRun]],
+    content: dict[tuple, int],
+    rng: random.Random,
+) -> None:
+    """Set `setup_seconds` on every wet-end run, in whole tenths of a minute.
+
+    Each change gets a floor drawn from the configured range. The idle time a
+    shift has after its content and the floors is shared out by weight, then
+    the shares are scaled per plant so the plant's total equals its target
+    (PF-21 for ATL and CHI, config for the others) times its machine-shifts.
+    The idle time follows the chain of late finishes, which depends only on
+    the floors, so one pass over the shifts in order is enough.
+    """
+    conf = cfg.wet_end_changes
+    lo, hi = conf["floor_minutes"]
+    floors: dict[int, int] = {}
+    weights: dict[int, float] = {}
+    last_grade: dict[str, str] = {}
+    for shift in ordered:
+        for w in wet_by_shift.get(shift.key, []):
+            floors[id(w)] = round(rng.uniform(lo, hi) * 10) * 6
+            weight = rng.uniform(0.6, 1.4)
+            prev = last_grade.get(shift.machine_code)
+            specialty = cfg.grade_by_code[w.grade_code].flute in SPECIALTY_FLUTES
+            was_specialty = prev is not None and cfg.grade_by_code[prev].flute in SPECIALTY_FLUTES
+            if prev is not None and specialty != was_specialty:
+                weight *= conf["specialty_transition_factor"]
+            if w.width_reset:
+                weight *= conf["width_reset_factor"]
+            weights[id(w)] = weight
+            last_grade[shift.machine_code] = w.grade_code
+
+    # Idle tenths of a minute per shift once the floors are in, following the
+    # chain of late finishes a full shift hands to the next one.
+    idle: dict[tuple, int] = {}
+    carry: dict[str, int] = {}
+    for shift in ordered:
+        setups = wet_by_shift.get(shift.key, [])
+        late = carry.get(shift.machine_code, 0)
+        scheduled = shift.scheduled_minutes * 60
+        budget = max(0, scheduled - content[shift.key] - late)
+        floor_total = sum(floors[id(w)] for w in setups)
+        idle[shift.key] = max(0, budget - floor_total) // 6
+        carry[shift.machine_code] = max(
+            0, late + content[shift.key] + max(budget, floor_total) - scheduled
+        )
+
+    # Per plant, the shifts share the target by their idle time, never beyond
+    # it: a tenth too many would make the shift run late with nothing to
+    # absorb it, and that lateness would carry forward for good.
+    by_plant: dict[str, list[Shift]] = defaultdict(list)
+    for shift in ordered:
+        by_plant[shift.plant_code].append(shift)
+    for plant, plant_shifts in by_plant.items():
+        target = round(change_minutes_per_shift(cfg, facts, plant) * len(plant_shifts) * 10)
+        floor_tenths = sum(floors[id(w)] for s in plant_shifts for w in wet_by_shift[s.key]) // 6
+        room = [idle[s.key] for s in plant_shifts]
+        want = max(0, min(target - floor_tenths, sum(room)))
+        share = [int(r * want / sum(room)) for r in room] if sum(room) else [0] * len(room)
+        short = want - sum(share)
+        for i in sorted(range(len(room)), key=lambda i: share[i] - room[i] * want / sum(room)):
+            if short == 0:
+                break
+            if share[i] < room[i]:
+                share[i] += 1
+                short -= 1
+        for shift, tenths in zip(plant_shifts, share, strict=True):
+            setups = wet_by_shift[shift.key]
+            split = scale_to_sum([weights[id(w)] for w in setups], tenths, minimum=0)
+            for w, extra in zip(setups, split, strict=True):
+                w.setup_seconds = floors[id(w)] + extra * 6
 
 
 def _advance(t: dt.datetime, gap_seconds: int, pending_fixed: list[StopEvent]) -> dt.datetime:
-    """Move through an idle gap, placing a fixed-time stop at its clock time if it falls inside."""
-    end = t + dt.timedelta(seconds=gap_seconds)
-    while pending_fixed and pending_fixed[0].start_time < end:
+    """Move through an idle gap, placing a fixed-time stop at its clock time if it falls inside.
+
+    The gap keeps its full length around the stop, so a wet-end change that the
+    boiler failure interrupted still takes its minutes once steam is back.
+    """
+    remaining = gap_seconds
+    while pending_fixed and pending_fixed[0].start_time < t + dt.timedelta(seconds=remaining):
         ev = pending_fixed.pop(0)
         start = max(t, ev.start_time)
+        remaining -= int((start - t).total_seconds())
         ev.start_time, ev.end_time = start, start + dt.timedelta(seconds=ev.duration_seconds)
-        end = max(end, ev.end_time)
         t = ev.end_time
-    return end
+    return t + dt.timedelta(seconds=remaining)
 
 
 def _place_standalone(ev: StopEvent, t: dt.datetime, pending_fixed: list[StopEvent]) -> dt.datetime:

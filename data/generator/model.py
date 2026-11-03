@@ -42,6 +42,7 @@ class WetEndRun:
     width_reset: bool
     has_order_change_stop: bool
     target_ft: int = 0
+    setup_seconds: int = 0  # wet-end change time at crawl before the first run
     runs: list[Run] = field(default_factory=list)
 
     @property
@@ -80,6 +81,7 @@ class Run:
     downtime_seconds: int
     new_wet_end_setup: bool
     width_reset: bool
+    setup_minutes: float = 0.0  # wet-end change time; on the first run of a setup, else 0
     # generator-only state, not written
     run_seconds: int = 0  # running time at speed, before stops are added
     customer_id: str = ""
@@ -107,8 +109,9 @@ class StopEvent:
     # generator-only
     true_cause: str = ""
     shift: Shift | None = None
-    run: Run | None = None  # the run it interrupted, if any
-    placement: str = "in_run"  # in_run, before_setup, standalone
+    setup: WetEndRun | None = None  # the setup it precedes, for before_setup events
+    run: Run | None = None  # the run it interrupted, set once runs exist
+    placement: str = "in_run"  # in_run, before_setup, standalone, fixed
 
 
 @dataclass

@@ -162,6 +162,7 @@ class Config:
             for c in raw["downtime_causes"]
         ]
         self.fault_codes = [FaultCode(**f) for f in raw["fault_codes"]]
+        self.wet_end_changes: dict[str, Any] = raw["wet_end_changes"]
         self.messiness: dict[str, Any] = raw["messiness"]
         self.quality: dict[str, Any] = raw["quality"]
         self.otif: dict[str, Any] = raw["otif"]
