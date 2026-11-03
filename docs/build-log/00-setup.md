@@ -259,6 +259,7 @@ This issue changed only docs. `make check` passes. The Google Cloud references w
 - Issues are the project work. Chat is for discussion.
 - Read every file added or removed in a PR.
 - My own estimate to make something production-ready: 8 to 10 weeks.
+- The superpower is the domain expertise, not the AI model. The model is a tool. It is advancing, but the reality is you need to design tests that fit your own mental model of the domain. The generator proved it in M1: it left two hours a shift at Chicago "unaccounted for," and the fix was not to tune it away but to recognize it as wet-end change time, the thing I had said was the expensive part. The session could not know that. I could.
 - Gemini also said to keep practicing SQL and Python because top-tier shops still interview for it live. I agree. The plan for that is to write the M3 reference SQL by hand and to rewrite one function per PR myself before merging, rather than separate exercises.
 
 ### Why Terraform exists, as it was explained to me
