@@ -31,3 +31,6 @@ crash.log
 .idea/
 .vscode/
 .DS_Store
+
+# Generated raw data (make generate). Uploaded to the landing bucket, never committed.
+data/raw/

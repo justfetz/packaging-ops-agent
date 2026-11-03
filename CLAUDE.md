@@ -6,7 +6,7 @@ Guidance for Claude Code sessions in `packaging-ops-agent`. The repo is the proj
 
 A live, public agentic analytics app over a synthetic packaging supply chain, built on GCP, with evals as the headline. Anyone can ask a question and see the answer, the SQL, the sources, and the trace. A public scoreboard shows eval scores over time and the PRs the eval gate blocked. Every step is documented in `docs/build-log/`.
 
-The full plan, milestones, and gates are in `docs/PLAN.md`. Current milestone: **M0 · Setup**.
+The full plan, milestones, and gates are in `docs/PLAN.md`. Current milestone: **M1 · Data** (M1.1 generator done; Bronze, Silver, Gold next).
 
 ## Stack
 
@@ -28,7 +28,7 @@ One tool per layer. Do not add an alternative without an ADR. The reasoning behi
 
 ```
 app/              FastAPI service and LangGraph agent (Python package `app`)
-data/             Seeded synthetic data generator, writes raw CSV and JSON to GCS
+data/             Seeded synthetic data generator (`data/generator/`), config and planted facts as YAML, writes raw CSV and JSON lines to GCS
 dbt/              dbt project: Bronze → Silver → Gold, tests, column descriptions
 evals/            Golden set, eval runner, DeepEval metrics
 infra/terraform/  Terraform modules and `envs/dev`, `envs/prod` roots
@@ -53,12 +53,16 @@ make terraform-check  # terraform fmt -check + validate on both roots, no cloud 
 make check     # lint + test + terraform-check, the same as CI
 make run       # uvicorn on http://127.0.0.1:8080
 
+make generate            # synthetic raw feeds to data/raw, seed 42, about 20 s. SEED= and RAW_DIR= override
+make check-facts         # recompute the 20 planted facts from data/raw against data/planted_facts.yaml
+make upload ENV=dev      # gcloud storage rsync data/raw to the ENV landing bucket, flat layout
+
 make bootstrap ENV=dev   # once per environment: create the Terraform state bucket with gcloud
 make plan ENV=dev        # terraform plan. Runs freely. PLAN_FLAGS="-out=plan.tfplan" saves it; make show-plan prints it
 make apply ENV=dev       # terraform apply. ENV=prod also needs CONFIRM=prod and the owner's go-ahead
 ```
 
-Planned for later milestones: `make eval` (M3). Always go through `make` rather than calling tools directly, so local runs and CI stay identical. `make check` needs Terraform at the version in `infra/terraform/.terraform-version`; in a Claude Code session install it the way `infra/terraform/README.md` describes.
+Planned for later milestones: `make eval` (M3). Any change to the generator or `data/config.yaml` changes the seed-42 checksum pinned in `tests/test_generator.py`; update it from the `make generate` output and say so in the PR. Always go through `make` rather than calling tools directly, so local runs and CI stay identical. `make check` needs Terraform at the version in `infra/terraform/.terraform-version`; in a Claude Code session install it the way `infra/terraform/README.md` describes.
 
 ## Coding standards
 
@@ -111,7 +115,7 @@ Recorded by M0.2 (issue #3) and M0.3 (issue #4). Dev only for now; prod gets its
 
 CI authenticates differently. A job declares `permissions: id-token: write` and calls the composite action `.github/actions/gcp-auth`, which runs `google-github-actions/auth` with the pool provider and the CI service account. GitHub mints an OIDC token for the job, Google's Security Token Service checks it against the provider's condition (this repository's numeric ID and owner ID), and the job gets a short-lived token for `github-ci`. The action writes a credential file that the Terraform google provider, the GCS backend, `gcloud`, and `bq` all pick up as Application Default Credentials. Nothing is stored in GitHub: no secret, no key, no variable. The `terraform-plan` job uses this to plan dev with `-lock=false` on every pull request from this repository and posts the plan as a PR comment; fork PRs skip it. Any later CI job that needs GCP, such as evals, reuses the same action and adds roles to `github-ci` in Terraform.
 
-Two session limits to know about. `registry.terraform.io` is not reachable, so Terraform and the google provider are installed from `releases.hashicorp.com` into the scratchpad with a filesystem mirror (steps in `infra/terraform/README.md`). And the session proxy decodes `%2F` in request paths, so a GCS object under a "folder" cannot be read or deleted by name through the JSON API from the sandbox; list and upload work, and the XML API path form works. Keep that in mind when M1 writes to the landing bucket.
+Three session limits to know about. `registry.terraform.io` is not reachable, so Terraform and the google provider are installed from `releases.hashicorp.com` into the scratchpad with a filesystem mirror (steps in `infra/terraform/README.md`). The session proxy decodes `%2F` in request paths, so a GCS object under a "folder" cannot be read or deleted by name through the JSON API from the sandbox; list and upload work, and the XML API path form works, which is why the landing bucket holds flat names like `raw__production_runs__2025-07.csv`. And legacy `gsutil` returns `401 Invalid Credentials` in a session because it does not read the injected token; use `gcloud storage` for everything.
 
 ## Definition of done
 

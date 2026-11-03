@@ -51,7 +51,7 @@ Each corrugator has two cutoff knives, upper and lower, each feeding its own sta
 
 **Paper widths run.** 110, 105, 100, 95, and 90 inches. Order width determines the roll width chosen; the gap is trim waste. Narrow rolls on a wide machine mean lost capacity, which is a scheduling decision the data should show.
 
-**Targets and typical performance.** Uptime target 95% of scheduled time. A 110" machine produces 200,000 to 400,000 lineal feet per 8-hour shift depending on grade, width, and order length. Atlanta runs near the top of that range, Chicago near the bottom because of short runs and roll changes, LA below it while ramping.
+**Targets and typical performance.** Uptime target 95% of scheduled time. A 110" machine produces 200,000 to 400,000 lineal feet per 8-hour shift depending on grade, width, and order length; the 98" specialty machines produce 120,000 to 200,000. Atlanta runs near the top of its range, Chicago near the bottom of its because of short runs and roll changes, LA in the lower half while ramping.
 
 **Crew.** About 10 per shift per corrugator: two forklift drivers, three on the wet end, one on the deck, two on the dry end handling tags and stacks, one at the bander turning and strapping units, plus a lead operator. Turnover in Atlanta shows up as more new-operator shifts with higher setup time and waste.
 
@@ -183,7 +183,7 @@ Each fact is one generator rule (M1.1), one dbt singular test against Gold (M1.4
 | PF-05 | Chicago moisture test failure rate was 9.5% in December 2025 through February 2026 versus 2.1% in June through August 2025 | quality |
 | PF-06 | Atlanta third shift runs 4.8% waste against 3.1% on first shift, the only plant with a shift gap over one point | runs |
 | PF-07 | Average wet-end run length: Atlanta 38,500 lineal feet, PA 31,000, LA 14,600, Chicago 9,200 | wet-end runs |
-| PF-08 | Chicago averages 11.4 wet-end changes per shift; Atlanta averages 3.2 | wet-end runs |
+| PF-08 | Wet-end changes per machine-shift: Chicago 16, LA 10, PA 9, Atlanta 7.5 | wet-end runs |
 | PF-09 | Width resets per shift: Chicago 2.7, PA 0.9 | wet-end runs |
 | PF-10 | 32 ECT C is 41% of all lineal feet produced companywide | runs |
 | PF-11 | On CHI-C1, 71 ECT BC averages 410 feet per minute; 32 ECT C averages 780 | runs |

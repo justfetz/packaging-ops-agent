@@ -1,0 +1,239 @@
+# Planted facts from docs/domain-spec.md section 12. The generator reads the
+# expected values as calibration targets; tests/test_generator.py recomputes
+# each measure from the generated raw files (applying the Silver rules listed
+# in data/README.md) and compares. A measure with no tolerance must match
+# exactly. Measures that are true/false are assertions about the data, such as
+# "this is the largest value".
+#
+# `definition` states how the measure is computed, so the dbt singular tests
+# in M1.4 and the golden questions in M3 use the same arithmetic.
+
+- id: PF-01
+  fact: ATL-C1 logged 46 missplice stops in June through August 2025, averaging 7 minutes, the most missplice events of any machine in any quarter. December 2025 through February 2026 it logged 12.
+  tables: [downtime]
+  definition: Stop events with canonical cause Missplice (after spelling normalisation, resolving "Other" by comment keyword, and inferring the cause from the fault code when the operator left it blank), counted by machine and start month. "Any quarter" is checked as any three consecutive calendar months for any machine.
+  expected:
+    events_jun_aug_2025: 46
+    mean_minutes_jun_aug_2025: 7.0
+    events_dec_feb: 12
+    is_largest_three_month_window: true
+  tolerance:
+    mean_minutes_jun_aug_2025: 0.05
+
+- id: PF-02
+  fact: Lower stacker jams are Chicago's largest unplanned downtime cause over the full period, 1,840 events and 18,400 minutes.
+  tables: [downtime]
+  definition: Stop events on CHI-C1 with canonical cause Stacker jam. Minutes are duration_seconds / 60. Largest is by both event count and minutes among unplanned causes.
+  expected:
+    events: 1840
+    minutes: 18400.0
+    is_largest_unplanned_cause: true
+  tolerance:
+    minutes: 0.5
+
+- id: PF-03
+  fact: PA-C1 is the only machine above the 95% uptime target, at 95.8% for the period.
+  tables: [runs, downtime]
+  definition: Uptime = 1 - (sum of stop event seconds / sum of scheduled seconds). Scheduled minutes come from shift summaries after dropping re-sent duplicates (latest emitted_at per machine, shift_date, shift_no wins).
+  expected:
+    pa_c1_uptime_pct: 95.8
+    only_machine_above_95: true
+  tolerance:
+    pa_c1_uptime_pct: 0.05
+
+- id: PF-04
+  fact: LA-C1's score-quality reject rate was 6.2% in Q3 2025 and 1.8% in Q3 2026.
+  tables: [quality]
+  definition: Quality tests of type score on LA-C1, latest recorded_at per test_id, grouped by sampled_at calendar quarter. Rate = fails / tests.
+  expected:
+    q3_2025_pct: 6.2
+    q3_2026_pct: 1.8
+  tolerance:
+    q3_2025_pct: 0.1
+    q3_2026_pct: 0.1
+
+- id: PF-05
+  fact: Chicago moisture test failure rate was 9.5% in December 2025 through February 2026 versus 2.1% in June through August 2025.
+  tables: [quality]
+  definition: Quality tests of type moisture at CHI, latest recorded_at per test_id, grouped by sampled_at month.
+  expected:
+    winter_pct: 9.5
+    summer_pct: 2.1
+  tolerance:
+    winter_pct: 0.1
+    summer_pct: 0.1
+
+- id: PF-06
+  fact: Atlanta third shift runs 4.8% waste against 3.1% on first shift, the only plant with a shift gap over one point.
+  tables: [runs]
+  definition: Waste % = (trim_sqft + shear_waste_sqft) / (sqft_produced + trim_sqft + shear_waste_sqft) over all production runs in the plant and shift. Gap is shift 3 minus shift 1.
+  expected:
+    atl_shift3_pct: 4.8
+    atl_shift1_pct: 3.1
+    only_plant_with_gap_over_one_point: true
+  tolerance:
+    atl_shift3_pct: 0.05
+    atl_shift1_pct: 0.05
+
+- id: PF-07
+  fact: Average wet-end run length is Atlanta 38,500 lineal feet, PA 31,000, LA 14,600, Chicago 9,200.
+  tables: [wet-end runs]
+  definition: A wet-end run is the set of production runs sharing a wet_end_setup_id. Its length is the sum of actual_lineal_ft. Mean per plant over all wet-end runs.
+  expected:
+    ATL: 38500
+    PA: 31000
+    LA: 14600
+    CHI: 9200
+  tolerance:
+    ATL: 20
+    PA: 20
+    LA: 20
+    CHI: 20
+
+- id: PF-08
+  fact: "Wet-end changes per machine-shift: Chicago 16, LA 10, PA 9, Atlanta 7.5."
+  tables: [wet-end runs]
+  definition: Wet-end changes per shift = count of distinct wet_end_setup_id / count of machine-shifts (distinct machine, shift_date, shift_no from deduplicated shift summaries), per plant. Every wet-end run starts with a wet-end change.
+  expected:
+    CHI: 16.0
+    LA: 10.0
+    PA: 9.0
+    ATL: 7.5
+  tolerance:
+    CHI: 0.05
+    LA: 0.05
+    PA: 0.05
+    ATL: 0.05
+
+- id: PF-09
+  fact: Width resets per shift are Chicago 2.7 and PA 0.9.
+  tables: [wet-end runs]
+  definition: A width reset is a wet-end run whose roll_width_in is wider than the previous wet-end run on the same machine in the same shift (the width_reset flag on the first production run of the setup). Resets / machine-shifts, per plant.
+  expected:
+    CHI: 2.7
+    PA: 0.9
+  tolerance:
+    CHI: 0.05
+    PA: 0.05
+
+- id: PF-10
+  fact: 32 ECT C is 41% of all lineal feet produced companywide.
+  tables: [runs]
+  definition: Sum of actual_lineal_ft where grade_code = 32ECT-C divided by the sum over all production runs.
+  expected:
+    share_pct: 41.0
+  tolerance:
+    share_pct: 0.05
+
+- id: PF-11
+  fact: On CHI-C1, 71 ECT BC averages 410 feet per minute and 32 ECT C averages 780.
+  tables: [runs]
+  definition: Derived speed per production run = actual_lineal_ft / ((run_end - run_start - downtime_seconds) / 60). Simple mean over runs on CHI-C1 by grade, excluding runs with run_end before run_start.
+  expected:
+    fpm_71ect_bc: 410
+    fpm_32ect_c: 780
+  tolerance:
+    fpm_71ect_bc: 1.0
+    fpm_32ect_c: 1.0
+
+- id: PF-12
+  fact: Companywide OTIF is 91.3%. Chicago is lowest at 84.6%, PA highest at 96.1%.
+  tables: [orders]
+  definition: Latest record per order_line_id (max updated_at). On time = shipped_date <= requested_ship_date. In full = shipped_qty within 10% of qty_sheets. OTIF = both. Rate per plant and companywide.
+  expected:
+    companywide_pct: 91.3
+    CHI: 84.6
+    PA: 96.1
+    chi_lowest_pa_highest: true
+  tolerance:
+    companywide_pct: 0.05
+    CHI: 0.05
+    PA: 0.05
+
+- id: PF-13
+  fact: The March 2025 paper increase raised cost per MSF 6.1%. The Atlanta anchor's contract price did not move until June, so that customer's margin fell from 14.2% in Q1 2025 to 8.9% in Q2.
+  tables: [orders]
+  definition: Cost step = standard cost per MSF for 2025-03 / 2025-02 - 1 from ref__standard_cost, same for every grade. Margin = 1 - sum(cost) / sum(revenue) over the Atlanta anchor's latest order-line records by shipped_date quarter, where revenue = shipped MSF * price_per_msf and cost = shipped MSF * std_cost_per_msf, and shipped MSF = shipped_qty * sheet_width_in * sheet_length_in / 144 / 1000.
+  expected:
+    cost_step_pct: 6.1
+    anchor_margin_q1_2025_pct: 14.2
+    anchor_margin_q2_2025_pct: 8.9
+  tolerance:
+    cost_step_pct: 0.05
+    anchor_margin_q1_2025_pct: 0.05
+    anchor_margin_q2_2025_pct: 0.05
+
+- id: PF-14
+  fact: The LA anchor took 61% of sheets shipped from LA.
+  tables: [orders]
+  definition: Sum of shipped_qty for customer C023 / sum of shipped_qty for plant LA, latest record per order line.
+  expected:
+    share_pct: 61.0
+  tolerance:
+    share_pct: 0.05
+
+- id: PF-15
+  fact: Starch pounds per MSF on 44 ECT C MR at LA fell from 3.9 in Q3 2025 to 3.1 in Q3 2026.
+  tables: [runs]
+  definition: Sum of starch (converted to pounds; LA logged kilograms before 2025-10-01) / sum of MSF produced (sqft_produced / 1000) over production runs with grade_code 44ECT-C-MR on LA-C1, by run_start quarter.
+  expected:
+    q3_2025_lb_per_msf: 3.9
+    q3_2026_lb_per_msf: 3.1
+  tolerance:
+    q3_2025_lb_per_msf: 0.02
+    q3_2026_lb_per_msf: 0.02
+
+- id: PF-16
+  fact: On ATL-C2, runs with cutoff under 21 inches waste 7.4% against 3.0% for 21 inches and over.
+  tables: [runs]
+  definition: Waste % as in PF-06, over ATL-C2 production runs split on cutoff_in < 21.
+  expected:
+    short_cutoff_pct: 7.4
+    long_cutoff_pct: 3.0
+  tolerance:
+    short_cutoff_pct: 0.05
+    long_cutoff_pct: 0.05
+
+- id: PF-17
+  fact: Planned downtime is 31% of all downtime minutes companywide; weekly PM averages 92 minutes per machine.
+  tables: [downtime]
+  definition: Planned follows the canonical cause's planned flag in ref__downtime_causes. Share = planned seconds / all seconds. PM mean = mean duration in minutes of events with canonical cause Preventive maintenance.
+  expected:
+    planned_share_pct: 31.0
+    pm_mean_minutes: 92.0
+  tolerance:
+    planned_share_pct: 0.05
+    pm_mean_minutes: 0.05
+
+- id: PF-18
+  fact: The longest single stop was a boiler failure in Atlanta on 14 January 2026, 212 minutes, taking down both ATL machines.
+  tables: [downtime]
+  definition: Max duration_seconds over all stop events. The event's date is the local start date; both ATL-C1 and ATL-C2 have a 212-minute boiler stop starting at the same time.
+  expected:
+    longest_minutes: 212.0
+    longest_date: "2026-01-14"
+    both_atl_machines: true
+
+- id: PF-19
+  fact: Highest-margin customer over the period is a Chicago furniture maker at 22.4%; lowest is the Atlanta anchor at 9.8%.
+  tables: [orders]
+  definition: Margin as in PF-13 per customer over the full period.
+  expected:
+    highest_customer: C007
+    highest_margin_pct: 22.4
+    lowest_customer: C001
+    lowest_margin_pct: 9.8
+  tolerance:
+    highest_margin_pct: 0.05
+    lowest_margin_pct: 0.05
+
+- id: PF-20
+  fact: Atlanta pin adhesion failures run 5.6% in June through August 2025 against 1.4% the rest of the year.
+  tables: [quality]
+  definition: Quality tests of type pin_adhesion at ATL, latest recorded_at per test_id, by sampled_at month in 2025. Rest of the year is the other nine months of 2025.
+  expected:
+    summer_2025_pct: 5.6
+    rest_of_2025_pct: 1.4
+  tolerance:
+    summer_2025_pct: 0.1
+    rest_of_2025_pct: 0.1
