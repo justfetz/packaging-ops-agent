@@ -1,0 +1,78 @@
+version: 2
+
+# The raw feeds the generator writes (data/README.md documents every column).
+# Defined once; each target reads them from a different place:
+#
+# - BigQuery (`dev`): the tables in the `bronze` dataset, loaded from the
+#   landing bucket by `make load` (M1.3). The identifier is the file prefix,
+#   so `bronze.raw__production_runs` holds every raw__production_runs__*.csv.
+# - DuckDB (`duckdb`): the files under RAW_DIR, read in place through
+#   dbt-duckdb's `external_location`, which replaces the relation with the
+#   read_csv or read_json call below. BigQuery ignores that setting.
+#
+# `{identifier}` is filled in by dbt-duckdb, `{{ env_var(...) }}` by dbt.
+sources:
+  - name: raw
+    description: Raw feeds from the plant systems, as written by data/generator. Nothing is cleaned here.
+    schema: bronze
+    tables:
+      - name: production_runs
+        identifier: raw__production_runs
+        description: One row per dry-end run, by run_start month.
+        config:
+          external_location: "read_csv('{{ env_var('RAW_DIR', 'data/raw') }}/{identifier}__*.csv', header = true, union_by_name = true)"
+      - name: stop_events
+        identifier: raw__stop_events
+        description: One row per stoppage of 30 seconds or more, by start_time month. JSON lines.
+        config:
+          external_location: "read_json('{{ env_var('RAW_DIR', 'data/raw') }}/{identifier}__*.jsonl', format = 'newline_delimited', union_by_name = true)"
+      - name: shift_summaries
+        identifier: raw__shift_summaries
+        description: One row per machine-shift, plus re-sends, by emitted_at month. JSON lines.
+        config:
+          external_location: "read_json('{{ env_var('RAW_DIR', 'data/raw') }}/{identifier}__*.jsonl', format = 'newline_delimited', union_by_name = true)"
+      - name: order_lines
+        identifier: raw__order_lines
+        description: One row per order line version, by updated_at month.
+        config:
+          external_location: "read_csv('{{ env_var('RAW_DIR', 'data/raw') }}/{identifier}__*.csv', header = true, union_by_name = true)"
+      - name: quality_tests
+        identifier: raw__quality_tests
+        description: One row per lab test result, plus retests, by recorded_at month.
+        config:
+          external_location: "read_csv('{{ env_var('RAW_DIR', 'data/raw') }}/{identifier}__*.csv', header = true, union_by_name = true)"
+      - name: plants
+        identifier: ref__plants
+        description: The four plants, with their IANA time zones.
+        config:
+          external_location: "read_csv('{{ env_var('RAW_DIR', 'data/raw') }}/{identifier}.csv', header = true)"
+      - name: machines
+        identifier: ref__machines
+        description: The five corrugators.
+        config:
+          external_location: "read_csv('{{ env_var('RAW_DIR', 'data/raw') }}/{identifier}.csv', header = true)"
+      - name: customers
+        identifier: ref__customers
+        description: The 25 customers.
+        config:
+          external_location: "read_csv('{{ env_var('RAW_DIR', 'data/raw') }}/{identifier}.csv', header = true)"
+      - name: board_grades
+        identifier: ref__board_grades
+        description: Board grades with flute and wall.
+        config:
+          external_location: "read_csv('{{ env_var('RAW_DIR', 'data/raw') }}/{identifier}.csv', header = true)"
+      - name: standard_cost
+        identifier: ref__standard_cost
+        description: Finance's standard cost per MSF by grade and month.
+        config:
+          external_location: "read_csv('{{ env_var('RAW_DIR', 'data/raw') }}/{identifier}.csv', header = true)"
+      - name: downtime_causes
+        identifier: ref__downtime_causes
+        description: Canonical downtime causes with category, planned flag, and typical minutes.
+        config:
+          external_location: "read_csv('{{ env_var('RAW_DIR', 'data/raw') }}/{identifier}.csv', header = true)"
+      - name: fault_codes
+        identifier: ref__fault_codes
+        description: Control-system fault codes mapped to section and cause.
+        config:
+          external_location: "read_csv('{{ env_var('RAW_DIR', 'data/raw') }}/{identifier}.csv', header = true)"

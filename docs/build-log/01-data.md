@@ -12,8 +12,9 @@ M1 turns the plan's "synthetic packaging dataset" into something BigQuery can ho
 | --- | --- | --- |
 | [#14](https://github.com/justfetz/packaging-ops-agent/issues/14) | Domain spec: the fictional company, plants, machines, grades, customers, messiness, and twenty planted facts | Jason with Claude, merged in [#21](https://github.com/justfetz/packaging-ops-agent/pull/21) |
 | [#15](https://github.com/justfetz/packaging-ops-agent/issues/15) | Seeded generator writing raw CSV and JSON lines to the landing bucket, with the planted facts realised and tested | Claude, merged in [#22](https://github.com/justfetz/packaging-ops-agent/pull/22) |
-| [#24](https://github.com/justfetz/packaging-ops-agent/issues/24) | M1.1b: model wet-end change time explicitly in the raw run records and plant PF-21 | Claude (this entry) |
-| M1.2 to M1.4 | Bronze load, Silver rules and tests, Gold models and singular tests for the planted facts | Next |
+| [#24](https://github.com/justfetz/packaging-ops-agent/issues/24) | M1.1b: model wet-end change time explicitly in the raw run records and plant PF-21 | Claude, merged in [#25](https://github.com/justfetz/packaging-ops-agent/pull/25) |
+| [#16](https://github.com/justfetz/packaging-ops-agent/issues/16) | M1.2: dbt project skeleton with DuckDB and BigQuery targets, `dbt build` in CI | Claude (this entry) |
+| M1.3 to M1.5 | Bronze load and Silver rules with tests, Gold models and singular tests for the planted facts, the dev build on merge | Next |
 
 The spec came first on purpose. A generator written before the spec would have planted whatever was convenient; the spec forced the generator to hit numbers somebody chose for a reason.
 
@@ -87,12 +88,40 @@ The #15 review left every machine-shift with minutes that were neither running t
 
 All 21 facts hold under `make check-facts` and in `tests/test_generator.py`, which now has 35 tests. The seed-42 set is 130 files, 317,032 rows, 48.7 MB; the checksum is re-pinned. `make check` passes, and the set is re-uploaded to the dev landing bucket with `make upload ENV=dev`.
 
+## Issue #16: the dbt skeleton, M1.2
+
+### What was built
+
+`dbt/` is a dbt Core 1.12 project with `dbt-duckdb` 1.11 and `dbt-bigquery` 1.12 as dev dependencies, two targets in a committed `profiles.yml`, the twelve raw feeds defined once as sources, one skeleton model per layer (`smoke_bronze` → `smoke_silver` → `smoke_gold`, one row each) with generic tests on every column and one singular test, and `make dbt-build TARGET=duckdb|dev` plus `make dbt-docs`. CI gained a fourth job, `dbt build (DuckDB)`, that generates the raw set and builds on DuckDB with no cloud access. `dbt/README.md` documents both targets and how each one authenticates.
+
+### Decisions made while building
+
+- **Sources are the file prefix on both targets.** The source identifier is `raw__production_runs` or `ref__plants`, the same string as the file name before the month. On BigQuery that is the table M1.3's load creates in `bronze`; on DuckDB it is the glob in the `external_location` that dbt-duckdb substitutes for the relation (`read_csv('data/raw/raw__production_runs__*.csv', ...)`). One definition, nothing branches on the target name in the models, and the BigQuery adapter never sees the DuckDB setting. `RAW_DIR` reaches the yaml through `env_var`, so the tests can point the sources at a temporary set.
+- **The skeleton models do not read the sources.** The `bronze` dataset is empty until M1.3 loads it, and the issue asked for the dev build to pass now. A bronze model over a source would have passed on DuckDB and failed on dev, or needed a load this issue does not own (M1.3 chooses between `bq load` and external tables). So the chain starts from a literal row, and the sources are proven another way: `tests/test_dbt_sources.py` renders every `external_location` as dbt would and reads it with DuckDB, and the row counts match the manifest for all twelve feeds (317,032 rows).
+- **One schema per layer, by overriding `generate_schema_name`.** dbt's default would have put `+schema: silver` into a `bronze_silver` dataset. The override uses the custom name as-is, so the three datasets Terraform created are the three layers, and dbt never creates a dataset.
+- **Session auth without a key file.** The sandbox has no Application Default Credentials, only the short-lived token in `CLOUDSDK_AUTH_ACCESS_TOKEN`. `profiles.yml` picks `oauth-secrets` with that token when the variable is set and plain `oauth` (ADC) otherwise, which is the same split the Makefile already makes for Terraform. A laptop and CI never see the branch.
+- **A byte cap from day one.** `maximum_bytes_billed: 1000000000` on the dev target. Issue #19 asks for it in M1.5; it costs nothing to set now, and the whole raw set is under 50 MB.
+- **`make` sets `DBT_PROJECT_DIR` and `DBT_PROFILES_DIR`**, so `uv run dbt <anything>` works from the repo root without `--project-dir` flags, and the DuckDB file and the source globs resolve against the repo root. Running dbt from inside `dbt/` would not find the raw files; the README says to go through `make`.
+
+### What broke
+
+- **dbt 1.11 deprecated the bare `accepted_values: {values: [...]}` form.** The first build passed with six deprecation warnings; the tests now use `arguments:`. Worth knowing before M1.3 writes dozens of them.
+- **DuckDB 2.0 removed `fetchone()` on relations.** The source test used it; `fetchall()` is the replacement. Nothing in the dbt build touched it.
+- **`docs.getdbt.com`, `duckdb.org`, and `github.com/duckdb/dbt-duckdb` are not reachable from a session**, as ADR 0003 found. The behaviour the README describes was confirmed in the installed adapter source and by running it, and the links are given for the reader.
+
+### How it was tested
+
+`make dbt-build TARGET=duckdb` on freshly generated data: 3 models, 19 generic tests, 1 singular test, 0.8 seconds after a 2-second parse. `make dbt-build TARGET=dev` from the session against BigQuery: the same 23 nodes in 20 seconds, `smoke_bronze` a view in `bronze`, `smoke_silver` and `smoke_gold` tables in `silver` and `gold`, confirmed with `bq ls` and a query. `dbt show --inline` over all twelve sources on DuckDB returned the manifest's row counts exactly. `make dbt-docs` writes `index.html` and `catalog.json`. `make test` runs 48 tests including the 13 new source checks, and `make check` passes with the pinned Terraform.
+
+The new CI job must be added to the branch ruleset's required checks by the owner; the job name is `dbt build (DuckDB)`.
+
 ## What I would change
 
 - Chicago's 135 minutes a shift now say "the plant" rather than "the generator", and PF-21 names them. The number is still a consequence of PF-07, PF-08, and PF-11; if a golden question ever asks how long a Chicago change takes, the answer is 8.4 minutes, and only moving one of those facts changes it.
 - Shifts that run late are now 2 to 6%; the rest of the spread is unplanned stops drawn after the feet were set. Making a late shift shed feet instead would mean a wet-end run spanning shifts, which the spec rules out.
 - Stop events have no `run_id`; Silver joins by time. That is realistic and it is also the first place the dbt work will hurt. If it takes more than an afternoon, add the id to the feed and note it.
 - `facts.py` reads every file with the `csv` module in two seconds. Once dbt exists, the same checks should run against DuckDB so there is one implementation of each rule, not two.
+- The dbt skeleton proves the plumbing, not the data. The first real models in M1.3 will be the first time a source is read on BigQuery, and the Bronze load choice (`bq load` into native tables, or external tables over the bucket) decides whether Bronze is cheap to rebuild or free to rebuild. Native tables are the simpler story for `make load`, external tables mean no copy and no stale Bronze.
 - The customer assignment is random within a plant. If the document corpus (M4) wants "the furniture maker buys 51 ECT BC", the generator needs a grade affinity per customer. Small change, do it when a golden question needs it.
 
 ## Where M1 stands
@@ -101,9 +130,10 @@ All 21 facts hold under `make check-facts` and in `tests/test_generator.py`, whi
 | --- | --- |
 | #14 Domain spec | Merged in [#21](https://github.com/justfetz/packaging-ops-agent/pull/21) |
 | #15 Generator | Merged in [#22](https://github.com/justfetz/packaging-ops-agent/pull/22). Raw set in the dev landing bucket, tests in CI |
-| #24 Wet-end change time | This PR. `setup_minutes` in the run feed, PF-21, 21 facts hold, set re-uploaded |
-| M1.2 Bronze | Not started |
-| M1.3 Silver | Not started. The rules are listed in `data/README.md` |
+| #24 Wet-end change time | Merged in [#25](https://github.com/justfetz/packaging-ops-agent/pull/25). `setup_minutes` in the run feed, PF-21, 21 facts hold, set re-uploaded |
+| #16 dbt skeleton | This PR. Two targets, sources for all twelve feeds, skeleton chain green on DuckDB and dev, `dbt build (DuckDB)` in CI |
+| M1.3 Bronze and Silver | Not started. The rules are listed in `data/README.md` |
 | M1.4 Gold | Not started. The fact definitions are in `data/planted_facts.yaml` |
+| M1.5 Dev build on merge | Not started |
 
 ## Owner notes

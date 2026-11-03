@@ -1,0 +1,26 @@
+version: 2
+
+models:
+  - name: smoke_silver
+    description: Skeleton model from M1.2 so `dbt build` runs end to end before the real silver models arrive. One row.
+    columns:
+      - name: layer
+        description: The layer this model lives in.
+        data_tests:
+          - not_null
+          - unique
+          - accepted_values:
+              arguments:
+                values: ["silver"]
+      - name: layer_order
+        description: Position of the layer in the pipeline, 1 for bronze.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [2]
+                quote: false
+      - name: built_on_target
+        description: The dbt target that built the row, duckdb or dev.
+        data_tests:
+          - not_null

@@ -2,7 +2,7 @@
 
 A live, public agentic analytics app over a synthetic packaging supply chain, built on GCP, with evals as the headline. Ask a question and get the answer, the SQL, the sources, and the trace. A public scoreboard shows eval scores over time and the PRs the eval gate blocked.
 
-**Status:** M1 · Data. The synthetic raw data set is generated and in the dev landing bucket ([data/README.md](data/README.md)); dbt models are next. Nothing is deployed yet.
+**Status:** M1 · Data. The synthetic raw data set is generated and in the dev landing bucket ([data/README.md](data/README.md)), and the dbt project builds on DuckDB in CI and on BigQuery in dev ([dbt/README.md](dbt/README.md)); the Bronze, Silver, and Gold models are next. Nothing is deployed yet.
 
 - Build plan: [docs/PLAN.md](docs/PLAN.md)
 - Build log: [docs/build-log/](docs/build-log/)
@@ -17,6 +17,7 @@ make install
 make check   # lint + tests + terraform fmt/validate, same as CI
 make run     # http://127.0.0.1:8080/healthz
 make generate       # synthetic raw data to data/raw, deterministic for a seed
+make dbt-build      # dbt build on DuckDB over data/raw; TARGET=dev builds BigQuery in dev
 make plan ENV=dev   # terraform plan against the dev project
 ```
 

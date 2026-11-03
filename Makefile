@@ -1,6 +1,6 @@
 # Common entry points. CLAUDE.md documents when to use each one.
 .DEFAULT_GOAL := help
-.PHONY: help install lint format test check run terraform-check bootstrap plan show-plan apply generate check-facts upload
+.PHONY: help install lint format test check run terraform-check bootstrap plan show-plan apply generate check-facts upload dbt-build dbt-docs
 
 # Terraform roots live under infra/terraform/envs/<ENV>. ENV is dev or prod.
 ENV ?= dev
@@ -12,6 +12,14 @@ TF_INIT := $(TF) -chdir=$(TF_ROOT) init -input=false -backend-config=backend.tfv
 # ${project_id}-landing, read from the Terraform root for ENV.
 SEED ?= 42
 RAW_DIR ?= data/raw
+
+# dbt. TARGET picks the output in dbt/profiles.yml: duckdb (local and CI) or
+# dev (BigQuery). The DuckDB target reads the raw files from RAW_DIR, so it is
+# exported for dbt as well. Run dbt from the repo root, through these targets.
+TARGET ?= duckdb
+export RAW_DIR
+export DBT_PROJECT_DIR := dbt
+export DBT_PROFILES_DIR := dbt
 
 # Extra arguments for `make plan`. CI passes "-lock=false -out=plan.tfplan":
 # its identity can only read state, and the saved plan feeds `make show-plan`.
@@ -69,6 +77,15 @@ upload: ## Copy RAW_DIR to the ENV landing bucket (flat layout, only changed fil
 	echo "uploading $(RAW_DIR) to $$bucket"; \
 	gcloud storage rsync $(RAW_DIR) "$$bucket" --project="$$project" --exclude='.*\.gitkeep$$'; \
 	gcloud storage ls "$$bucket" --project="$$project" | wc -l | xargs -I{} echo "{} objects in $$bucket"
+
+dbt-build: ## dbt build on TARGET=duckdb|dev. duckdb needs RAW_DIR from make generate
+ifeq ($(TARGET),duckdb)
+	@test -f $(RAW_DIR)/manifest.json || { echo "no manifest in $(RAW_DIR); run make generate first"; exit 1; }
+endif
+	uv run dbt build --target $(TARGET)
+
+dbt-docs: ## Generate the dbt docs site for TARGET into dbt/target; serve it with uv run dbt docs serve
+	uv run dbt docs generate --target $(TARGET)
 
 bootstrap: ## Create the Terraform state bucket for ENV once, with gcloud. Safe to rerun
 	@bucket=$$(sed -n 's/^bucket *= *"\(.*\)"/\1/p' $(TF_ROOT)/backend.tfvars); \
