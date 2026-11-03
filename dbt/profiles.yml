@@ -1,0 +1,33 @@
+# Committed on purpose: nothing here is secret. Pick a target with
+# `make dbt-build TARGET=duckdb|dev`.
+packaging_ops:
+  target: duckdb
+  outputs:
+    # Local runs and CI. The database is one file under dbt/target, so
+    # `dbt clean` removes it with the other artifacts. Sources read the raw
+    # files from RAW_DIR (models/sources.yml), which `make generate` writes.
+    duckdb:
+      type: duckdb
+      path: "{{ env_var('DBT_DUCKDB_PATH', 'dbt/target/packaging_ops.duckdb') }}"
+      schema: main
+      threads: 4
+
+    # The dev project on BigQuery. Credentials come from the environment:
+    # Application Default Credentials on a laptop or in CI (Workload Identity
+    # Federation writes an ADC file), and in a Claude Code session the
+    # short-lived token the environment puts in CLOUDSDK_AUTH_ACCESS_TOKEN,
+    # the same one the Makefile hands to Terraform. No key file anywhere.
+    dev:
+      type: bigquery
+      method: "{{ 'oauth-secrets' if env_var('CLOUDSDK_AUTH_ACCESS_TOKEN', '') else 'oauth' }}"
+      token: "{{ env_var('CLOUDSDK_AUTH_ACCESS_TOKEN', '') }}"
+      project: packaging-ops-agent-dev
+      dataset: bronze   # only for a model with no +schema; every layer sets one
+      location: US
+      priority: interactive
+      threads: 4
+      job_execution_timeout_seconds: 300
+      # Byte cap per query, so a bad model cannot run up the budget. The whole
+      # raw set is under 50 MB; 1 GB leaves room for joins and still caps a
+      # runaway at a fraction of a cent on on-demand pricing.
+      maximum_bytes_billed: 1000000000

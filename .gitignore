@@ -34,3 +34,6 @@ crash.log
 
 # Generated raw data (make generate). Uploaded to the landing bucket, never committed.
 data/raw/
+
+# dbt writes this cookie file next to profiles.yml
+dbt/.user.yml

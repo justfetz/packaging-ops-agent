@@ -6,7 +6,7 @@ Guidance for Claude Code sessions in `packaging-ops-agent`. The repo is the proj
 
 A live, public agentic analytics app over a synthetic packaging supply chain, built on GCP, with evals as the headline. Anyone can ask a question and see the answer, the SQL, the sources, and the trace. A public scoreboard shows eval scores over time and the PRs the eval gate blocked. Every step is documented in `docs/build-log/`.
 
-The full plan, milestones, and gates are in `docs/PLAN.md`. Current milestone: **M1 · Data** (M1.1 generator done; Bronze, Silver, Gold next).
+The full plan, milestones, and gates are in `docs/PLAN.md`. Current milestone: **M1 · Data** (M1.1 generator and M1.2 dbt skeleton done; Bronze and Silver models next).
 
 ## Stack
 
@@ -57,12 +57,15 @@ make generate            # synthetic raw feeds to data/raw, seed 42, about 20 s.
 make check-facts         # recompute the 21 planted facts from data/raw against data/planted_facts.yaml
 make upload ENV=dev      # gcloud storage rsync data/raw to the ENV landing bucket, flat layout
 
+make dbt-build TARGET=duckdb   # dbt build on DuckDB, reading data/raw. What CI runs on every PR. TARGET=dev builds BigQuery in dev
+make dbt-docs TARGET=duckdb    # dbt docs generate into dbt/target
+
 make bootstrap ENV=dev   # once per environment: create the Terraform state bucket with gcloud
 make plan ENV=dev        # terraform plan. Runs freely. PLAN_FLAGS="-out=plan.tfplan" saves it; make show-plan prints it
 make apply ENV=dev       # terraform apply. ENV=prod also needs CONFIRM=prod and the owner's go-ahead
 ```
 
-Planned for later milestones: `make eval` (M3). Any change to the generator or `data/config.yaml` changes the seed-42 checksum pinned in `tests/test_generator.py`; update it from the `make generate` output and say so in the PR. Always go through `make` rather than calling tools directly, so local runs and CI stay identical. `make check` needs Terraform at the version in `infra/terraform/.terraform-version`; in a Claude Code session install it the way `infra/terraform/README.md` describes.
+Planned for later milestones: `make eval` (M3). Run dbt only through `make`, from the repo root: the DuckDB target and the sources use paths relative to it, and `make` sets `DBT_PROJECT_DIR` and `DBT_PROFILES_DIR`. Any change to the generator or `data/config.yaml` changes the seed-42 checksum pinned in `tests/test_generator.py`; update it from the `make generate` output and say so in the PR. Always go through `make` rather than calling tools directly, so local runs and CI stay identical. `make check` needs Terraform at the version in `infra/terraform/.terraform-version`; in a Claude Code session install it the way `infra/terraform/README.md` describes.
 
 ## Coding standards
 
@@ -83,7 +86,7 @@ Planned for later milestones: `make eval` (M3). Any change to the generator or `
 - Draft or update the milestone's `docs/build-log/` entry in the same PR: what was built, how, what broke, what you would change.
 - Every build-log entry ends with an `## Owner notes` section. Claude creates it empty and never writes in it; the owner fills it before merge.
 - Every bug found becomes a new golden question in `evals/golden.yaml` (from M3 on).
-- CI must be green before merge. `main` is protected: changes arrive by pull request with the three CI checks (`Lint and test`, `Terraform fmt and validate`, `Terraform plan (dev)`) passing, and that applies to admins too. Claude never merges; the owner reviews and merges.
+- CI must be green before merge. `main` is protected: changes arrive by pull request with the four CI checks (`Lint and test`, `dbt build (DuckDB)`, `Terraform fmt and validate`, `Terraform plan (dev)`) passing, and that applies to admins too. Claude never merges; the owner reviews and merges.
 
 ## Permissions and safety
 
@@ -109,7 +112,7 @@ Recorded by M0.2 (issue #3) and M0.3 (issue #4). Dev only for now; prod gets its
 | Terraform state | `gs://packaging-ops-agent-dev-tfstate`, object `default.tfstate` at the bucket root. Created by `make bootstrap`, not by Terraform |
 | Landing bucket | `gs://packaging-ops-agent-dev-landing`, versioned, uniform access, public access prevented |
 | BigQuery datasets | `bronze`, `silver`, `gold`, `evals` in the `US` multi-region |
-| Session auth | The Claude Code environment injects a short-lived token for `*.googleapis.com` and sets `GCP_PROJECT_ID`. No key file exists in the sandbox. The Makefile hands the same token to Terraform through `GOOGLE_OAUTH_ACCESS_TOKEN` |
+| Session auth | The Claude Code environment injects a short-lived token for `*.googleapis.com` and sets `GCP_PROJECT_ID`. No key file exists in the sandbox. The Makefile hands the same token to Terraform through `GOOGLE_OAUTH_ACCESS_TOKEN`, and `dbt/profiles.yml` uses it for the `dev` target (`oauth-secrets`) when it is set, falling back to Application Default Credentials otherwise |
 
 `gcloud`, `bq`, and `curl` against `*.googleapis.com` work in a session with no setup. Pass `--project "$GCP_PROJECT_ID"` explicitly; the sandbox has no default project configured.
 

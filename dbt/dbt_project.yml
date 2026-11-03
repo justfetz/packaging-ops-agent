@@ -1,0 +1,35 @@
+# dbt project for the packaging warehouse: Bronze → Silver → Gold.
+# Two targets in profiles.yml: `duckdb` (local and CI) and `dev` (BigQuery).
+# Layout and commands are in README.md; the target choice is ADR 0003.
+name: packaging_ops
+version: "0.1.0"
+profile: packaging_ops
+require-dbt-version: [">=1.12.0", "<2.0.0"]
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+seed-paths: ["seeds"]
+analysis-paths: ["analyses"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target"
+clean-targets: ["target", "dbt_packages", "logs"]
+
+flags:
+  send_anonymous_usage_stats: false
+
+# One schema per layer. generate_schema_name (macros/) uses the custom schema
+# name as-is, so on BigQuery these are the bronze, silver, and gold datasets
+# that Terraform created, and on DuckDB they are schemas in the project file.
+models:
+  packaging_ops:
+    bronze:
+      +schema: bronze
+      +materialized: view
+    silver:
+      +schema: silver
+      +materialized: table
+    gold:
+      +schema: gold
+      +materialized: table

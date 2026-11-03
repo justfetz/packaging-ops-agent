@@ -34,6 +34,40 @@ jobs:
       - name: Test
         run: make test
 
+  dbt-duckdb:
+    name: dbt build (DuckDB)
+    runs-on: ubuntu-latest
+    # The PR gate for the dbt project (ADR 0003): generate the raw set, then
+    # build and test every model on DuckDB. No cloud access and no identity.
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Set up Python from .python-version
+        run: uv python install
+
+      - name: Install dependencies
+        run: make install
+
+      - name: Generate the raw feeds
+        run: make generate
+
+      - name: dbt build on DuckDB
+        run: make dbt-build TARGET=duckdb
+
+      - name: Upload dbt run results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: dbt-duckdb-run-results
+          path: |
+            dbt/target/run_results.json
+            dbt/target/manifest.json
+          if-no-files-found: ignore
+          retention-days: 7
+
   terraform:
     name: Terraform fmt and validate
     runs-on: ubuntu-latest

@@ -1,7 +1,7 @@
 """Tests for the synthetic data generator.
 
 The full set is generated once per test session into a temporary directory
-(about 20 seconds). Every planted fact is recomputed from the written files,
+(about 20 seconds, fixture in conftest.py). Every planted fact is recomputed from the written files,
 the checksum pins the bytes for seed 42, and the messiness rules are checked
 to be present at their configured rates.
 """
@@ -19,24 +19,12 @@ import pytest
 from data.generator import generate
 from data.generator.config import load_config, load_facts
 from data.generator.facts import CauseNormaliser, compare_facts, measure_facts
+from tests.conftest import SEED
 
-SEED = 42
 # Same seed, same bytes. Any change to the generator or its config changes this
 # value; update it from `make generate` and say why in the PR.
 EXPECTED_CHECKSUM = "64dcfbee944864d6cd1353fc8604c509bd9e0cce4c3c9acc10a9845a73b5b392"
 MAX_BYTES = 50_000_000
-
-
-@pytest.fixture(scope="session")
-def raw_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    out = tmp_path_factory.mktemp("raw")
-    generate(SEED, out)
-    return out
-
-
-@pytest.fixture(scope="session")
-def manifest(raw_dir: Path) -> dict:
-    return json.loads((raw_dir / "manifest.json").read_text())
 
 
 @pytest.fixture(scope="session")
