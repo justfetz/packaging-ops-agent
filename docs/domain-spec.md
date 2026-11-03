@@ -66,9 +66,11 @@ In practice wet-end runs are shorter than anyone wants, because order quantities
 
 **Width sequencing.** The rule is step down: run 110, then 105, 100, 95, then reset to 110 on the next grade. Every reset is a wet-end change. Many resets per shift means a bad schedule or a bad order book, and the data should show which plant has that problem.
 
+**Change time.** A wet-end change takes 5 to 10 minutes at crawl speed while the splice goes through and the new width settles. Those minutes are neither a logged stop nor production at rate, and they are the expensive part of the change: at Chicago's change rate they add up to more than two hours a shift. Specialty transitions, into or out of double wall and E flute, take longest, and Chicago has the most of them. Each wet-end run record carries the time as `setup_minutes`.
+
 **Speed.** Feet per minute is derived: lineal feet produced over run time, per dry-end run. Speed steps with grade and width: double wall and E flute run slower; a narrow web on a wide machine runs at full speed but wastes capacity.
 
-**Gold implication.** `fct_production_runs` is at dry-end run grain and carries a `wet_end_run_id`, the grade, the web width, derived feet per minute, waste %, and flags for whether the run started a new wet-end setup and whether that setup was a width reset. A second Gold table, `fct_wet_end_runs`, rolls up to grade and width: total lineal feet, order count, duration, and the change type that started it.
+**Gold implication.** `fct_production_runs` is at dry-end run grain and carries a `wet_end_run_id`, the grade, the web width, derived feet per minute, waste %, and flags for whether the run started a new wet-end setup and whether that setup was a width reset. A second Gold table, `fct_wet_end_runs`, rolls up to grade and width: total lineal feet, order count, duration, the change type that started it, and the setup minutes it cost.
 
 ## 6. Data produced by the machines
 
@@ -196,6 +198,7 @@ Each fact is one generator rule (M1.1), one dbt singular test against Gold (M1.4
 | PF-18 | The longest single stop was a boiler failure in Atlanta on 14 January 2026, 212 minutes, taking down both ATL machines | downtime |
 | PF-19 | Highest-margin customer over the period is a Chicago furniture maker at 22.4%; lowest is the Atlanta anchor at 9.8% | orders |
 | PF-20 | Atlanta pin adhesion failures run 5.6% in June through August 2025 against 1.4% the rest of the year | quality |
+| PF-21 | Chicago loses about 135 minutes per machine-shift to wet-end changes; Atlanta about 45 | wet-end runs |
 
 Two facts are set up for the M4 document corpus: an incident report explains PF-18, and a maintenance manual section on the splicer explains PF-01. Questions about "why" need both tools.
 

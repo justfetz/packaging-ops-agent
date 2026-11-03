@@ -1,32 +1,32 @@
 # data/
 
-Seeded synthetic data for **Ironwood Container**, the fictional corrugated sheet feeder in [docs/domain-spec.md](../docs/domain-spec.md): four plants, five corrugators, November 2024 through October 2026. The generator writes raw CSV and JSON lines files that land in the GCS landing bucket and become the Bronze layer in M1.2. Messy data is deliberate so Silver has real work to do, and twenty planted facts give the dbt tests (M1.4) and the eval golden set (M3) exact answers.
+Seeded synthetic data for **Ironwood Container**, the fictional corrugated sheet feeder in [docs/domain-spec.md](../docs/domain-spec.md): four plants, five corrugators, November 2024 through October 2026. The generator writes raw CSV and JSON lines files that land in the GCS landing bucket and become the Bronze layer in M1.2. Messy data is deliberate so Silver has real work to do, and twenty-one planted facts give the dbt tests (M1.4) and the eval golden set (M3) exact answers.
 
-Built in M1.1 (issue [#15](https://github.com/justfetz/packaging-ops-agent/issues/15)). Build log: [docs/build-log/01-data.md](../docs/build-log/01-data.md).
+Built in M1.1 (issue [#15](https://github.com/justfetz/packaging-ops-agent/issues/15)); wet-end change time and PF-21 added in M1.1b (issue [#24](https://github.com/justfetz/packaging-ops-agent/issues/24)). Build log: [docs/build-log/01-data.md](../docs/build-log/01-data.md).
 
 ## Files
 
 ```
 config.yaml           Every number from the domain spec: plants, machines, grades, customers, causes, messiness rates
-planted_facts.yaml    The 20 planted facts with expected values, tolerances, and the definition of each measure
+planted_facts.yaml    The 21 planted facts with expected values, tolerances, and the definition of each measure
 generator/            The Python package (python -m data.generator)
 raw/                  Output of make generate. Gitignored; the copy of record is the landing bucket
 ```
 
-Inside `generator/`, one module per stage, in the order they run:
+Inside `generator/`, one module per stage. They run as shifts, production (the setups), downtime, production again (the feet and dry-end runs), timeline, orders, quality, mess, writers:
 
 | Module | Does |
 | --- | --- |
 | `config.py` | Loads the two YAML files into typed objects |
 | `shifts.py` | The calendar: machine-shifts, holidays, Q4 Saturday overtime, LA starting July 2025 |
-| `production.py` | Wet-end runs (grade, width, step-down sequence) and the dry-end runs inside them; waste, speed, starch |
-| `downtime.py` | Stop events sized to each machine's uptime, the planted events, the planned share, the operator's spelling habits |
-| `timeline.py` | Clock times for every run and stop inside its shift; shift summaries |
+| `production.py` | Wet-end runs (grade, width, step-down sequence) first; once the stops of every shift are known, each shift's feet balanced around them and the dry-end runs inside the setups; waste, speed, starch |
+| `downtime.py` | Stop events sized to each machine's uptime and given a shift before the feet are spread: the planted events, the planned share, the unplanned filler, the operator's spelling habits. Attached to runs once the runs exist |
+| `timeline.py` | Clock times for every run and stop inside its shift, the wet-end change time of every setup (`setup_minutes`, PF-21), shift summaries |
 | `orders.py` | An order line per run: dates, quantities, OTIF, price, cost, the standard cost table |
 | `quality.py` | Lab tests per setup, per shift, per order, and at receiving |
 | `mess.py` | Re-sent summaries, retests, kilograms at LA, clock resets, order edits, width disagreement |
 | `writers.py` | Flat files with the month in the name, fixed formatting, `manifest.json` |
-| `facts.py` | Recomputes all 20 facts from the written files, with the Silver rules they depend on |
+| `facts.py` | Recomputes all 21 facts from the written files, with the Silver rules they depend on |
 | `calibrate.py` | Helpers that nudge a random draw to an exact total, count, mean, or ratio |
 
 ## Commands
@@ -34,14 +34,14 @@ Inside `generator/`, one module per stage, in the order they run:
 ```bash
 make generate                 # data/raw, seed 42, about 20 seconds
 make generate SEED=7 RAW_DIR=/tmp/raw7
-make check-facts              # recompute the 20 facts from data/raw and compare to planted_facts.yaml
+make check-facts              # recompute the 21 facts from data/raw and compare to planted_facts.yaml
 make upload ENV=dev           # gcloud storage rsync data/raw to gs://packaging-ops-agent-dev-landing/
 make test                     # includes tests/test_generator.py: facts, checksum, messiness, determinism
 ```
 
 The generator needs only PyYAML and the standard library. Same seed, same bytes: `manifest.json` carries a SHA-256 per file and one combined `checksum`, and `tests/test_generator.py` pins the checksum for seed 42. **Any change to the generator or to `config.yaml` changes the checksum.** Update the constant in the test from the `make generate` output and say so in the PR.
 
-For seed 42 the set is 130 files, 317,157 rows, 48.5 MB, under the 50 MB ceiling that keeps BigQuery scans in the free tier.
+For seed 42 the set is 130 files, 317,032 rows, 48.7 MB, under the 50 MB ceiling that keeps BigQuery scans in the free tier.
 
 ## Layout in the bucket
 
@@ -84,10 +84,11 @@ One row per **dry-end run**: one order on one knife inside a wet-end setup. 71,7
 | `shift_date`, `shift_no` | The shift the run belongs to. Shift 3 starts at 22:00 and carries the date it started |
 | `stops_count`, `downtime_seconds` | Stop events that happened inside this run |
 | `new_wet_end_setup`, `width_reset` | True on the first run of a setup; `width_reset` when that setup went to a wider web than the previous one in the shift |
+| `setup_minutes` | Wet-end change time (spec section 5): minutes at crawl speed before this setup ran at rate, on the first run of the setup and 0 on the runs that follow inside it. One decimal. Plant means per change are 5 to 9 minutes, Chicago highest (PF-21). The clock agrees: `run_start` of the first run minus the end of whatever came before it, less any logged stop in between, is this value |
 
 ### `raw__stop_events` (JSON lines, by `start_time`)
 
-One row per stoppage of 30 seconds or more. 17,433 rows.
+One row per stoppage of 30 seconds or more. 17,400 rows.
 
 | Column | Meaning |
 | --- | --- |
@@ -122,7 +123,7 @@ One row per order line version; a line edited after download has two rows (item 
 
 ### `raw__quality_tests` (CSV, by `recorded_at`)
 
-One row per test result, plus retests (item 5). 146,312 rows for about 140,700 tests.
+One row per test result, plus retests (item 5). 146,220 rows for about 140,600 tests.
 
 | Column | Meaning |
 | --- | --- |
@@ -152,12 +153,12 @@ Numbered as in the spec's section 11. Each becomes a Silver rule and a dbt test 
 | 6 | LA starch in kilograms for three months | `mess.la_starch_in_kilograms` | LA runs before 2025-10-01 | Multiply by 2.20462 where plant = LA and run_start < 2025-10-01 |
 | 7 | Run end before run start (clock reset) | `mess.clock_reset_runs` | 14 runs at ATL and PA | Exclude from speed; keep for volume and waste |
 | 8 | Order lines edited after download | `mess.edit_order_lines` | 3% of lines, quantity ±10 to 30% | Latest `updated_at` per `order_line_id` |
-| 9 | Micro-stops under 30 seconds are not logged | `production._balance_shifts`, `timeline.lay_out` | About 45 to 55 unaccounted minutes per shift at Atlanta, PA, and LA; about 135 at Chicago (see below) | Nothing to fix; `scheduled − runs − stops` is "unaccounted" and worth a Gold column |
+| 9 | Micro-stops under 30 seconds are not logged | `timeline.lay_out` | `scheduled − runs − stops − setup_minutes` averages under a minute per shift; a few percent of shifts run late by 5 to 10 minutes and the next shift absorbs it | Nothing to fix; the difference is worth a Gold column, and before `setup_minutes` existed it was 45 to 135 minutes a shift (see below) |
 | 10 | Roll width keyed by hand in one feed, read from the machine in another | `mess.disagree_roll_width` | 1% of lines, ±5 inches | Machine value wins; count the disagreements |
 
 ## Planted facts
 
-[planted_facts.yaml](planted_facts.yaml) has all twenty with the expected values, a tolerance per measure, and a `definition` that states the arithmetic. The generator reads the targets from that file, so there is one place to change a number. The test `test_planted_fact[PF-xx]` recomputes each from the written files; `make check-facts` prints the same comparison.
+[planted_facts.yaml](planted_facts.yaml) has all twenty-one with the expected values, a tolerance per measure, and a `definition` that states the arithmetic. The generator reads the targets from that file, so there is one place to change a number. The test `test_planted_fact[PF-xx]` recomputes each from the written files; `make check-facts` prints the same comparison.
 
 How the targets are hit: the generator draws plausible values first and then calibrates. Counts are placed exactly (46 missplices, 1,840 stacker jams, 212 minutes). Means and totals are scaled to the target and rounded, with the residual on one record (wet-end run length, PM minutes, starch). Rates are set by choosing exactly `round(n × rate)` records (OTIF, test failures). Ratios over overlapping groups, such as Atlanta waste by shift and ATL-C2 waste by cutoff, use iterative proportional fitting on shear waste. Downtime is budgeted per machine from its uptime target, planned events first, then the planned share is completed with order-change and no-orders stops, then unplanned filler to the machine total.
 
@@ -183,11 +184,13 @@ How the targets are hit: the generator draws plausible values first and then cal
 | PF-18 | 212 minutes, 2026-01-14 09:15 to 12:47, both Atlanta machines, cause boiler |
 | PF-19 | C007 Lakeshore Furniture Works 22.4%; C001 Southern Brands Converting 9.8% |
 | PF-20 | 5.6% and 1.4% |
+| PF-21 | Chicago 134.9, Atlanta 45.0; PA 47.8, LA 53.5. Per change: Chicago 8.4, Atlanta 6.0, LA 5.4, PA 5.3 |
 
 ## Simplifications and where the data departs from the spec
 
-- **Feet per shift follow the spec's typical-performance paragraph.** PF-08 was revised (issue #15 review) to Atlanta 7.5, Chicago 16, PA 9, and LA 10 wet-end changes per machine-shift, so the plants run about 282,000 and 295,000 (ATL-C1, ATL-C2), 147,000 (CHI-C1), 279,000 (PA-C1), and 146,000 (LA-C1) lineal feet per shift. Feet are spread across shifts so each shift's running time tracks the time available (scheduled × uptime − 50 minutes), which leaves 45 to 55 unaccounted minutes per shift at Atlanta, PA, and LA. **Chicago keeps about 135 unaccounted minutes** because PF-11 pins its derived speeds (780 and 410 fpm) while PF-07 and PF-08 pin its feet; 16 setups of 9,200 feet take under 300 minutes at those speeds. Those minutes sit between setups and are the unlogged part of a change-over. About one shift in eight exceeds 480 minutes because PM, knife change, or a long stop landed in it; the next shift starts late and absorbs it.
-- **Derived speed is well below nominal** outside the pinned Chicago grades: Atlanta runs about 700 fpm, PA about 680, LA about 450 while ramping. Derived speed is lineal feet over running time, so it carries slow running and unlogged micro-stops; the pinned 780 fpm on CHI-C1 32 ECT C is the one place the spec says what the gap to nominal looks like.
+- **Feet per shift follow the spec's typical-performance paragraph.** PF-08 was revised (issue #15 review) to Atlanta 7.5, Chicago 16, PA 9, and LA 10 wet-end changes per machine-shift, so the plants run about 282,000 and 295,000 (ATL-C1, ATL-C2), 147,000 (CHI-C1), 279,000 (PA-C1), and 146,000 (LA-C1) lineal feet per shift. Stops are sized and given a shift before the feet are spread, so each shift's running time is balanced to what it has left after its stops and its wet-end change time: a shift holding the weekly PM gets fewer feet instead of running late. What a shift has left after running time and logged stops is its wet-end change time (issue #24): about 45 minutes at Atlanta, 48 at PA, 54 at LA, and **135 at Chicago**, where PF-11 pins the speeds and PF-07 with PF-08 pin the feet, so 16 setups of 9,200 feet take under 300 minutes and the rest of the shift goes to changes. That is the Chicago story in one number, and PF-21 plants it. The plant means are not free targets; they follow from the other facts and the speeds, and the generator hands the time to the changes up to the target in `planted_facts.yaml`.
+- **Wet-end change time is a floor plus a share of the shift's idle time.** Every change gets 1.5 to 3 minutes however busy the shift is, then the shift's remaining idle time is shared out by weight, with specialty transitions (into or out of double wall and E flute) weighing 1.6 and width resets 1.25. The shares are scaled per plant so the plant total lands on its target. A shift whose stops outgrew the feet it was given runs late; those are 2 to 6% of shifts, by 5 to 10 minutes, and the next shift starts late and absorbs it. Chicago has no change under 3 minutes and 71% between 5 and 10; Atlanta has 12% under 3 minutes, mostly on third shift.
+- **Derived speed is well below nominal** outside the pinned Chicago grades: Atlanta runs about 700 fpm, PA about 680, LA about 450 while ramping. Derived speed is lineal feet over running time, so it carries slow running and unlogged micro-stops but not change time, which sits before `run_start`; the pinned 780 fpm on CHI-C1 32 ECT C is the one place the spec says what the gap to nominal looks like.
 - **Dry-end runs inside a setup are laid out one after another**, alternating knives, and the setup's lineal feet is their sum, as the spec's section 5 says. On a real corrugator the two knives cut the same web side by side; a side-by-side model would halve the feet and break PF-07's definition.
 - **Runs do not cross shift boundaries.** The first setup of a shift always differs in grade or width from the last setup of the previous shift.
 - **Wet-end change stops are not one per setup.** A splice-through grade change does not stop the machine; the planned "Order change, grade change" stop happens on a share of hard transitions (into or out of double wall and E flute), most often at Chicago. Otherwise Chicago's 11.4 changes per shift would cost more downtime than its uptime allows.

@@ -15,9 +15,6 @@ calendar:
     - { shift_no: 1, start: "06:00", minutes: 480 }
     - { shift_no: 2, start: "14:00", minutes: 480 }
     - { shift_no: 3, start: "22:00", minutes: 480 }
-  # Feet are spread across shifts so running time tracks the time available
-  # (scheduled x uptime) minus this slack: unlogged micro-stops and slow running.
-  unaccounted_minutes_per_shift: 50
   overtime_saturdays:
     plants: [ATL, PA]
     months: [10, 11]
@@ -39,6 +36,19 @@ calendar:
     - 2026-05-25
     - 2026-07-03
     - 2026-09-07
+
+# Wet-end changes (spec section 5). A splice or width change runs at crawl
+# speed for minutes that are neither a logged stop nor production at rate.
+# Feet are spread across shifts so running time tracks scheduled x uptime
+# minus this time, and the timeline hands each shift's idle time to its
+# changes: a floor every change needs, plus a weighted share of the rest,
+# scaled per plant to the minutes-per-shift target. PF-21 pins ATL and CHI;
+# PA and LA follow from their feet, speeds, and uptime.
+wet_end_changes:
+  minutes_per_shift: { ATL: 45, CHI: 135, PA: 48, LA: 54 }
+  floor_minutes: [1.5, 3.0]          # no change is quicker, even in a shift running late
+  specialty_transition_factor: 1.6   # into or out of double wall or E flute
+  width_reset_factor: 1.25           # stepping back up to a wider web
 
 plants:
   - code: ATL

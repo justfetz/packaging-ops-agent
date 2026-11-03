@@ -2,7 +2,8 @@
 
 Items 1 to 3 (cause-code spellings, "Other" with a comment, fault code without
 an operator cause) are applied when stop events are created in downtime.py.
-Item 9 (unlogged micro-stops) is the gap the timeline leaves in every shift.
+Item 9 (unlogged micro-stops) is what the timeline leaves in a shift after
+running time, logged stops, and wet-end change time: a few minutes at most.
 Each function here is one item, so data/README.md can point at it.
 """
 

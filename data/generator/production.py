@@ -12,7 +12,11 @@ Order of work, each step calibrated to its planted fact where one exists:
 4. Waste calibration: Atlanta by shift and ATL-C2 by cutoff (PF-06, PF-16).
 5. Derived speed (PF-11 on CHI-C1) and starch use (PF-15 at LA).
 
-Run times are set later by the timeline, once the downtime is known.
+Production is built in two calls around the downtime: `build_wet_end_runs`
+decides the setups of every shift, then downtime.py sizes every stop and
+gives it a shift, then `build_runs` spreads the feet so each shift's running
+time fits the time it has left after its stops and its wet-end change time
+(PF-21). Run clock times are set later by the timeline.
 """
 
 from __future__ import annotations
@@ -33,24 +37,34 @@ SPECIALTY_FLUTES = {"BC", "E"}
 EPOCH = dt.datetime(2000, 1, 1)
 
 
-def build_production(
+def build_wet_end_runs(
     cfg: Config, facts: dict[str, PlannedFact], shifts: list[Shift], rng: random.Random
-) -> tuple[list[WetEndRun], list[Run]]:
+) -> list[WetEndRun]:
+    """The setups of every shift: grade, web width, reset flag. No lengths yet."""
     by_plant: dict[str, list[Shift]] = defaultdict(list)
     for s in shifts:
         by_plant[s.plant_code].append(s)
-
     wet_runs: list[WetEndRun] = []
     for plant in cfg.plants:
         plant_shifts = sorted(by_plant[plant.code], key=lambda s: (s.start, s.machine_code))
         wet_runs.extend(_wet_end_runs_for_plant(cfg, facts, plant, plant_shifts, rng))
+    return wet_runs
 
-    _assign_lengths(cfg, facts, wet_runs, rng)
+
+def build_runs(
+    cfg: Config,
+    facts: dict[str, PlannedFact],
+    wet_runs: list[WetEndRun],
+    stop_seconds: dict[tuple, int],
+    rng: random.Random,
+) -> list[Run]:
+    """Lengths, dry-end runs, waste, speed, and starch, given each shift's stop seconds."""
+    _assign_lengths(cfg, facts, wet_runs, stop_seconds, rng)
     runs = _split_into_dry_end_runs(cfg, wet_runs, rng)
     _calibrate_waste(cfg, facts, runs)
     _assign_speeds(cfg, facts, runs, rng)
     _assign_starch(cfg, facts, runs, rng)
-    return wet_runs, runs
+    return runs
 
 
 # ----------------------------------------------------------------------------
@@ -195,7 +209,11 @@ def _hard_transition(
 
 
 def _assign_lengths(
-    cfg: Config, facts: dict[str, PlannedFact], wet_runs: list[WetEndRun], rng: random.Random
+    cfg: Config,
+    facts: dict[str, PlannedFact],
+    wet_runs: list[WetEndRun],
+    stop_seconds: dict[tuple, int],
+    rng: random.Random,
 ) -> None:
     by_plant: dict[str, list[WetEndRun]] = defaultdict(list)
     for w in wet_runs:
@@ -211,7 +229,7 @@ def _assign_lengths(
             flute = cfg.grade_by_code[w.grade_code].flute
             factor = 0.6 if flute in SPECIALTY_FLUTES else 1.0
             draws.append(rng.lognormvariate(math.log(mean * factor), 0.35))
-        draws = _balance_shifts(cfg, group, draws)
+        draws = _balance_shifts(cfg, facts, group, draws, stop_seconds)
         for w, ft in zip(group, scale_to_sum(draws, mean * len(group), minimum=800), strict=True):
             lengths[id(w)] = ft
 
@@ -259,25 +277,43 @@ def _estimated_fpm(cfg: Config, w: WetEndRun) -> float:
     if w.shift.plant_code == "LA":
         months_in = (w.shift.shift_date.year - 2025) * 12 + w.shift.shift_date.month - 7
         speed *= min(1.0, 0.82 + 0.03 * months_in)
+    if w.shift.shift_no == 3 and w.shift.plant_code == "ATL":
+        speed *= 0.97  # as in _assign_speeds
     return speed
 
 
-def _balance_shifts(cfg: Config, group: list[WetEndRun], draws: list[float]) -> list[float]:
+def change_minutes_per_shift(cfg: Config, facts: dict[str, PlannedFact], plant_code: str) -> float:
+    """Wet-end change minutes per machine-shift: PF-21 where it pins the plant, config otherwise."""
+    configured = cfg.wet_end_changes["minutes_per_shift"][plant_code]
+    return float(facts["PF-21"].expected.get(plant_code, configured))
+
+
+def _balance_shifts(
+    cfg: Config,
+    facts: dict[str, PlannedFact],
+    group: list[WetEndRun],
+    draws: list[float],
+    stop_seconds: dict[tuple, int],
+) -> list[float]:
     """Rescale each shift's setups so running time tracks the time available.
 
-    Available = scheduled minutes x machine uptime - the configured unaccounted
-    slack. The plant total is restored afterwards by scale_to_sum, so this only
-    moves feet between shifts; the per-plant mean (PF-07) does not change.
+    Available = scheduled seconds - the stops already placed in the shift -
+    the plant's wet-end change time per shift (PF-21). The plant total is
+    restored afterwards by scale_to_sum, so this only moves feet between
+    shifts; the per-plant mean (PF-07) does not change, and neither does the
+    mean time per shift left for changes, which is fixed by PF-07, PF-08, the
+    uptime, and the speeds. A shift that holds the weekly PM or a long
+    breakdown is given fewer feet instead of running late.
     """
-    slack = cfg.raw["calendar"]["unaccounted_minutes_per_shift"]
     by_shift: dict[tuple, list[int]] = defaultdict(list)
     for i, w in enumerate(group):
         by_shift[w.shift.key].append(i)
     out = list(draws)
     for indices in by_shift.values():
         w0 = group[indices[0]]
-        machine = cfg.machine_by_code[w0.shift.machine_code]
-        available = (w0.shift.scheduled_minutes * machine.uptime_pct / 100.0 - slack) * 60
+        scheduled = w0.shift.scheduled_minutes * 60
+        change = change_minutes_per_shift(cfg, facts, w0.shift.plant_code) * 60
+        available = max(0.2 * scheduled, scheduled - change - stop_seconds.get(w0.shift.key, 0))
         estimated = sum(draws[i] / _estimated_fpm(cfg, group[i]) * 60 for i in indices)
         factor = available / estimated if estimated > 0 else 1.0
         for i in indices:

@@ -54,6 +54,7 @@ RUN_COLUMNS = [
     "downtime_seconds",
     "new_wet_end_setup",
     "width_reset",
+    "setup_minutes",
 ]
 STOP_COLUMNS = [
     "event_id",
@@ -130,6 +131,7 @@ DECIMALS = {
     "sheet_width_in": 3,
     "sheet_length_in": 2,
     "starch_qty": 1,
+    "setup_minutes": 1,
     "price_per_msf": 2,
     "std_cost_per_msf": 2,
     "cost_per_msf": 2,

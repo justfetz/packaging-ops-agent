@@ -23,7 +23,7 @@ from data.generator.facts import CauseNormaliser, compare_facts, measure_facts
 SEED = 42
 # Same seed, same bytes. Any change to the generator or its config changes this
 # value; update it from `make generate` and say why in the PR.
-EXPECTED_CHECKSUM = "7ca613b708c65e4cd7206d6418768e1efea0addae68f158d73ba91e3324f0ec0"
+EXPECTED_CHECKSUM = "64dcfbee944864d6cd1353fc8604c509bd9e0cce4c3c9acc10a9845a73b5b392"
 MAX_BYTES = 50_000_000
 
 
@@ -81,7 +81,7 @@ def test_layout_is_flat_with_month_in_filename(raw_dir: Path) -> None:
     assert not any(p.is_dir() for p in raw_dir.iterdir())
 
 
-@pytest.mark.parametrize("fact_id", [f"PF-{n:02d}" for n in range(1, 21)])
+@pytest.mark.parametrize("fact_id", [f"PF-{n:02d}" for n in range(1, 22)])
 def test_planted_fact(fact_id: str, measured: dict[str, dict]) -> None:
     facts = load_facts()
     rows = compare_facts(facts, measured)[fact_id]
@@ -173,28 +173,53 @@ def test_roll_width_disagrees_between_feeds(raw_dir: Path) -> None:
     assert disagree / len(lines) == pytest.approx(0.01, abs=0.005)
 
 
-def test_unaccounted_time_per_shift(raw_dir: Path) -> None:
-    """Item 9: micro-stops are not logged, so shifts carry some unaccounted time.
+def test_wet_end_change_time_is_explicit(raw_dir: Path) -> None:
+    """Spec section 5: a wet-end change takes 5 to 10 minutes at crawl speed.
 
-    Unaccounted = scheduled minutes - run wall time (running plus the stops
-    inside runs) - stops between runs. The generator spreads feet so this
-    averages about 50 minutes at Atlanta, PA, and LA. Chicago is higher by
-    construction: PF-11 pins its speeds and PF-07/PF-08 pin its feet, so 16
-    short setups of 9,200 feet cannot fill a shift. The odd shift runs over,
-    as the one holding the 212-minute boiler stop does.
+    `setup_minutes` sits on the first run of every setup and is 0 on the runs
+    that follow. The plant mean per change is between 5 and 10 minutes, with
+    Chicago highest, and no change is quicker than the configured floor.
+    """
+    cfg = load_config()
+    runs = _csv_rows(raw_dir, "raw__production_runs")
+    per_change: dict[str, list[float]] = {}
+    for r in runs:
+        minutes = float(r["setup_minutes"])
+        if r["new_wet_end_setup"] == "true":
+            per_change.setdefault(r["plant_code"], []).append(minutes)
+        else:
+            assert minutes == 0.0, r["run_id"]
+    floor = cfg.wet_end_changes["floor_minutes"][0]
+    means = {p: sum(v) / len(v) for p, v in per_change.items()}
+    assert set(means) == {"ATL", "CHI", "PA", "LA"}
+    for plant, values in per_change.items():
+        assert 5.0 <= means[plant] <= 10.0, means
+        assert min(values) >= floor, plant
+    assert max(means, key=lambda p: means[p]) == "CHI", means
+
+
+def test_shift_time_reconciles_once_changes_are_counted(raw_dir: Path) -> None:
+    """Item 9: what is left after runs, stops, and change time is minutes, not an hour.
+
+    Unaccounted = scheduled - run wall time (running plus the stops inside
+    runs) - stops between runs - setup_minutes. The timeline hands a shift's
+    idle time to its changes, so the mean is near zero at every plant. A shift
+    that holds more stops than its feet were balanced for runs late; the next
+    shift starts late and absorbs it. Those are a few percent of shifts.
     """
     runs = _csv_rows(raw_dir, "raw__production_runs")
     stops = _jsonl_rows(raw_dir, "raw__stop_events")
     summaries = _jsonl_rows(raw_dir, "raw__shift_summaries")
     windows: dict[str, list[tuple[dt.datetime, dt.datetime]]] = {}
     wall: Counter[tuple[str, str, int]] = Counter()
+    setup: Counter[tuple[str, str, int]] = Counter()
     for r in runs:
+        key = (r["machine_code"], r["shift_date"], int(r["shift_no"]))
         start = dt.datetime.fromisoformat(r["run_start"])
         end = dt.datetime.fromisoformat(r["run_end"])
+        setup[key] += float(r["setup_minutes"])
         if end > start:
-            wall[(r["machine_code"], r["shift_date"], int(r["shift_no"]))] += (
-                end - start
-            ).total_seconds() / 60
+            wall[key] += (end - start).total_seconds() / 60
             windows.setdefault(r["machine_code"], []).append((start, end))
     between: Counter[tuple[str, str, int]] = Counter()
     shifts = {
@@ -215,9 +240,9 @@ def test_unaccounted_time_per_shift(raw_dir: Path) -> None:
     by_plant: dict[str, list[float]] = {}
     for key, (s0, s1) in shifts.items():
         scheduled = (s1 - s0).total_seconds() / 60
-        by_plant.setdefault(key[0].split("-")[0], []).append(scheduled - wall[key] - between[key])
+        left = scheduled - wall[key] - between[key] - setup[key]
+        by_plant.setdefault(key[0].split("-")[0], []).append(left)
     means = {p: sum(v) / len(v) for p, v in by_plant.items()}
-    assert means["ATL"] < 60 and means["PA"] < 60 and means["LA"] < 60, means
-    assert means["CHI"] < 150, means
-    for plant, values in by_plant.items():
-        assert sum(1 for v in values if v < 0) / len(values) < 0.2, plant
+    assert all(-1.0 < m < 5.0 for m in means.values()), means
+    late = {p: sum(1 for v in values if v < -1.0) / len(values) for p, values in by_plant.items()}
+    assert all(share < 0.1 for share in late.values()), late

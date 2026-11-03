@@ -11,8 +11,10 @@ PA-C1; the others sit below 95%). Inside that total:
 - the rest of each machine's budget is unplanned filler drawn from the cause
   table with the machine's weights and the seasonal multipliers.
 
-Events get their clock times from the timeline. Here they only know their
-shift, their duration, and the run they interrupt.
+`build_downtime` runs before the feet are assigned, so every event knows its
+shift and its duration but not yet the run it interrupts; production then
+gives a shift with a long stop fewer feet instead of letting it run late.
+`attach_stops` picks the run afterwards. Clock times come from the timeline.
 """
 
 from __future__ import annotations
@@ -80,7 +82,6 @@ def build_downtime(
     facts: dict[str, PlannedFact],
     shifts: list[Shift],
     wet_runs: list[WetEndRun],
-    runs: list[Run],
     rng: random.Random,
 ) -> list[StopEvent]:
     shifts_by_machine: dict[str, list[Shift]] = defaultdict(list)
@@ -89,9 +90,6 @@ def build_downtime(
     for lst in shifts_by_machine.values():
         lst.sort(key=lambda s: s.start)
     shift_by_key = {s.key: s for s in shifts}
-    runs_by_shift: dict[tuple, list[Run]] = defaultdict(list)
-    for r in runs:
-        runs_by_shift[(r.machine_code, r.shift_date, r.shift_no)].append(r)
     wet_by_machine: dict[str, list[WetEndRun]] = defaultdict(list)
     for w in wet_runs:
         wet_by_machine[w.shift.machine_code].append(w)
@@ -121,9 +119,9 @@ def build_downtime(
         add(ev)
 
     # --- planted, unplanned -------------------------------------------------
-    for ev in _missplices(cfg, facts, shifts_by_machine, runs_by_shift, rng):
+    for ev in _missplices(cfg, facts, shifts_by_machine, rng):
         add(ev)
-    for ev in _stacker_jams(cfg, facts, runs, rng):
+    for ev in _stacker_jams(cfg, facts, wet_by_machine["CHI-C1"], rng):
         add(ev)
     for ev in _paired_atlanta_events(cfg, shift_by_key):
         add(ev)
@@ -158,14 +156,56 @@ def build_downtime(
                 f"{machine.code}: planted and planned downtime exceed the uptime budget by "
                 f"{-remaining // 60} minutes"
             )
-        for ev in _filler(
-            cfg, machine.code, remaining, shifts_by_machine[machine.code], runs_by_shift, rng
-        ):
+        for ev in _filler(cfg, machine.code, remaining, shifts_by_machine[machine.code], rng):
             add(ev)
 
     for ev in events:
         _dress(cfg, ev, rng)
     return events
+
+
+def stop_seconds_by_shift(events: list[StopEvent]) -> dict[tuple, int]:
+    out: dict[tuple, int] = defaultdict(int)
+    for ev in events:
+        assert ev.shift is not None
+        out[ev.shift.key] += ev.duration_seconds
+    return out
+
+
+def attach_stops(cfg: Config, events: list[StopEvent], runs: list[Run], rng: random.Random) -> None:
+    """Give every in-run stop the run it interrupted, now that the runs exist.
+
+    Picks are weighted by running time, so long runs collect more stops; a
+    stacker jam on CHI-C1 also leans to E flute and short cutoffs, where the
+    sheets are hardest to stack. An order-change stop goes before the first
+    run of its setup.
+    """
+    runs_by_shift: dict[tuple, list[Run]] = defaultdict(list)
+    for r in runs:
+        runs_by_shift[(r.machine_code, r.shift_date, r.shift_no)].append(r)
+    for ev in events:
+        assert ev.shift is not None
+        if ev.placement == "before_setup" and ev.setup is not None and ev.setup.runs:
+            ev.run = ev.setup.runs[0]
+        elif ev.placement == "in_run":
+            options = runs_by_shift.get(ev.shift.key, [])
+            if not options:
+                ev.placement = "standalone"
+                continue
+            if ev.true_cause == "Stacker jam":
+                weights = [_jam_weight(cfg, r) * r.run_seconds for r in options]
+            else:
+                weights = [r.run_seconds for r in options]
+            ev.run = rng.choices(options, weights)[0]
+
+
+def _jam_weight(cfg: Config, run: Run) -> float:
+    w = 1.0
+    if cfg.grade_by_code[run.grade_code].flute == "E":
+        w *= 3.0
+    if run.cutoff_in < 20:
+        w *= 2.0
+    return w
 
 
 # ----------------------------------------------------------------------------
@@ -238,7 +278,6 @@ def _missplices(
     cfg: Config,
     facts: dict[str, PlannedFact],
     shifts_by_machine: dict[str, list[Shift]],
-    runs_by_shift: dict[tuple, list[Run]],
     rng: random.Random,
 ) -> list[StopEvent]:
     cause = cfg.cause_by_code["Missplice"]
@@ -255,9 +294,8 @@ def _missplices(
             n = overrides.get(month, schedule["default"][code])
             for _ in range(n):
                 shift = rng.choice(month_shifts)
-                run = _pick_run(runs_by_shift, shift, rng)
                 seconds = rng.randint(cause.minutes[0] * 60, cause.minutes[1] * 60)
-                ev = _new_event(cfg, code, "Missplice", seconds, shift, run, "in_run")
+                ev = _new_event(cfg, code, "Missplice", seconds, shift, None, "in_run")
                 out.append(ev)
                 if code == "ATL-C1" and month in ("2025-06", "2025-07", "2025-08"):
                     summer_2025.append(ev)
@@ -270,26 +308,23 @@ def _missplices(
 
 
 def _stacker_jams(
-    cfg: Config, facts: dict[str, PlannedFact], runs: list[Run], rng: random.Random
+    cfg: Config, facts: dict[str, PlannedFact], wet_runs: list[WetEndRun], rng: random.Random
 ) -> list[StopEvent]:
+    """PF-02: an exact count and total of jams on CHI-C1, leaning to shifts heavy in E flute."""
     cause = cfg.cause_by_code["Stacker jam"]
     pf02 = facts["PF-02"].expected
-    chi_runs = [r for r in runs if r.machine_code == "CHI-C1"]
-    weights = []
-    for r in chi_runs:
-        w = 1.0
-        if cfg.grade_by_code[r.grade_code].flute == "E":
-            w *= 3.0
-        if r.cutoff_in < 20:
-            w *= 2.0
-        weights.append(w)
-    picks = rng.choices(chi_runs, weights, k=pf02["events"])
+    weight_by_shift: dict[tuple, float] = defaultdict(float)
+    shift_of: dict[tuple, Shift] = {}
+    for w in wet_runs:
+        weight_by_shift[w.shift.key] += 3.0 if cfg.grade_by_code[w.grade_code].flute == "E" else 1.0
+        shift_of[w.shift.key] = w.shift
+    keys = sorted(weight_by_shift, key=lambda k: (shift_of[k].start, k))
+    picks = rng.choices(keys, [weight_by_shift[k] for k in keys], k=pf02["events"])
     draws = [rng.uniform(cause.minutes[0] * 60, cause.minutes[1] * 60) for _ in picks]
     secs = scale_to_sum(draws, round(pf02["minutes"] * 60), cause.minutes[0] * 60)
     return [
-        _new_event(cfg, "CHI-C1", "Stacker jam", s, r.shift, r, "in_run")
-        for r, s in zip(picks, secs, strict=True)
-        if r.shift is not None
+        _new_event(cfg, "CHI-C1", "Stacker jam", sec, shift_of[k], None, "in_run")
+        for k, sec in zip(picks, secs, strict=True)
     ]
 
 
@@ -332,15 +367,15 @@ def _planned_flex(
     out: list[StopEvent] = []
     remaining = minutes * 60
     change = cfg.cause_by_code["Order change, grade change"]
-    candidates = [w for w in wet_runs if w.has_order_change_stop and w.runs]
+    candidates = [w for w in wet_runs if w.has_order_change_stop]
     rng.shuffle(candidates)
     for w in candidates:
         seconds = rng.randint(change.minutes[0] * 60, change.minutes[1] * 60)
         if seconds > remaining:
             break
-        out.append(
-            _new_event(cfg, machine_code, change.code, seconds, w.shift, w.runs[0], "before_setup")
-        )
+        ev = _new_event(cfg, machine_code, change.code, seconds, w.shift, None, "before_setup")
+        ev.setup = w
+        out.append(ev)
         remaining -= seconds
 
     idle = cfg.cause_by_code["No orders, waiting on schedule"]
@@ -364,7 +399,6 @@ def _filler(
     machine_code: str,
     budget_seconds: int,
     shifts: list[Shift],
-    runs_by_shift: dict[tuple, list[Run]],
     rng: random.Random,
 ) -> list[StopEvent]:
     plant = cfg.machine_by_code[machine_code].plant
@@ -379,8 +413,7 @@ def _filler(
         seconds = rng.randint(cause.minutes[0] * 60, cause.minutes[1] * 60)
         seconds = min(seconds, remaining)
         shift = rng.choices(shifts, cum_weights=shift_weights[cause.code])[0]
-        run = _pick_run(runs_by_shift, shift, rng)
-        out.append(_new_event(cfg, machine_code, cause.code, seconds, shift, run, "in_run"))
+        out.append(_new_event(cfg, machine_code, cause.code, seconds, shift, None, "in_run"))
         remaining -= seconds
     if remaining and out:
         out[-1].duration_seconds += remaining
@@ -401,15 +434,6 @@ def _shift_weights(cause: Cause, plant: str, shifts: list[Shift]) -> list[float]
         total += w
         cum.append(total)
     return cum
-
-
-def _pick_run(
-    runs_by_shift: dict[tuple, list[Run]], shift: Shift, rng: random.Random
-) -> Run | None:
-    options = runs_by_shift.get(shift.key)
-    if not options:
-        return None
-    return rng.choices(options, [r.run_seconds for r in options])[0]
 
 
 # ----------------------------------------------------------------------------
